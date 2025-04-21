@@ -148,7 +148,7 @@ class Recent_K_Sampler_no_cache:
 
 
 
-class Recent_K_Sampler:
+class Recent_K_Sampler_without_prefetching:
     def __init__(self, sampler_data, max_chunk_per_node, k, cache_size_limit=512):
         self.chunk_map = torch.tensor(sampler_data['chunk_map'], dtype=torch.long, device='cuda')
         self.chunk_last_ts = torch.tensor(sampler_data['chunk_last_ts'], dtype=torch.float64, device='cuda')
@@ -266,3 +266,105 @@ class Recent_K_Sampler:
 
 
         return collected_eid_values
+
+
+
+class Recent_K_Sampler:
+    def __init__(self, sampler_data, max_chunk_per_node, k, device='cuda'):
+        self.device = device
+        self.max_chunk_per_node = max_chunk_per_node
+        self.k = k
+
+        # Preprocess and store TCI structure on CPU
+        self.chunk_map = torch.tensor(sampler_data['chunk_map'], dtype=torch.long, device=device)
+        self.chunk_last_ts = torch.tensor(sampler_data['chunk_last_ts'], dtype=torch.float64, device=device)
+
+        self.ts_chunks_all_cpu = torch.tensor(sampler_data['ts_chunks'], dtype=torch.float64, pin_memory=True)
+        self.eid_chunks_all_cpu = torch.tensor(sampler_data['eid_chunks'], dtype=torch.int64, pin_memory=True)
+
+        # CUDA streams
+        self.prefetch_stream = torch.cuda.Stream(device=device)  # For background prefetching
+        self.compute_stream = torch.cuda.default_stream(device=device)  # Main compute stream
+
+        # Double buffer: keep two prefetch slots
+        self.prefetch_buffer_ts = [None, None]
+        self.prefetch_buffer_eid = [None, None]
+        self.current_prefetch_idx = 0
+
+    def _select_and_prefetch(self, root_node, root_ts):
+        """Internal: Select chunks and async prefetch pinned CPU -> GPU"""
+
+        # Step 1: Find chunk ids needed
+        chunk_ids, previous_chunk_ids = sampler.find_chunk_from_last_ts(
+            root_node,
+            root_ts,
+            self.chunk_map,
+            self.chunk_last_ts,
+            self.max_chunk_per_node
+        )
+
+        all_chunk_ids = torch.cat([chunk_ids, previous_chunk_ids], dim=0)
+        valid_mask = all_chunk_ids != -1
+        all_chunk_ids = all_chunk_ids[valid_mask]
+        all_needed_chunk_ids, _ = torch.sort(torch.unique(all_chunk_ids))
+
+        # Step 2: Create CPU slices
+        ts_chunks_selected_cpu = self.ts_chunks_all_cpu[all_needed_chunk_ids.cpu()]
+        eid_chunks_selected_cpu = self.eid_chunks_all_cpu[all_needed_chunk_ids.cpu()]
+
+        # Step 3: Allocate prefetch slot
+        slot = self.current_prefetch_idx
+
+        # Step 4: Async copy CPU -> GPU using pinned memory + prefetch stream
+        with torch.cuda.stream(self.prefetch_stream):
+            self.prefetch_buffer_ts[slot] = ts_chunks_selected_cpu.to(self.device, non_blocking=True)
+            self.prefetch_buffer_eid[slot] = eid_chunks_selected_cpu.to(self.device, non_blocking=True)
+
+        # Step 5: Record needed mapping
+        max_chunk_id = torch.max(all_needed_chunk_ids).item() + 1
+        global_to_local = torch.full((max_chunk_id,), -1, dtype=torch.long, device=self.device)
+        global_to_local[all_needed_chunk_ids] = torch.arange(all_needed_chunk_ids.size(0), device=self.device)
+
+        return chunk_ids, previous_chunk_ids, global_to_local
+
+    def sample(self, root_node, root_ts, k=None):
+        """Main sampling call: will use prefetched data if available"""
+
+        if k is None:
+            k = self.k
+
+        # Step 1: Prefetch next batch
+        chunk_ids, previous_chunk_ids, global_to_local = self._select_and_prefetch(root_node, root_ts)
+
+        # Step 2: Wait for previous prefetch stream to finish
+        torch.cuda.current_stream().wait_stream(self.prefetch_stream)
+
+        # Step 3: Now use prefetched data
+        slot = self.current_prefetch_idx
+        ts_chunks_selected = self.prefetch_buffer_ts[slot]
+        eid_chunks_selected = self.prefetch_buffer_eid[slot]
+
+        chunk_ids_local = global_to_local[chunk_ids]
+        previous_chunk_ids_local = torch.where(
+            previous_chunk_ids != -1,
+            global_to_local[previous_chunk_ids],
+            torch.full_like(previous_chunk_ids, -1)
+        )
+
+        # Step 4: Fused find + collect sampling
+        collected_ts_indices = sampler.fused_find_and_collect(
+            ts_chunks_selected,
+            chunk_ids_local,
+            previous_chunk_ids_local,
+            root_ts,
+            ts_chunks_selected.size(-1),
+            k
+        )
+
+        eid_chunks_flattened = eid_chunks_selected.flatten()
+        sampled_eids = eid_chunks_flattened[collected_ts_indices]
+
+        # Step 5: Rotate prefetch buffer for next batch
+        self.current_prefetch_idx = (self.current_prefetch_idx + 1) % 2
+
+        return sampled_eids
