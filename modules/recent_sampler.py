@@ -218,37 +218,51 @@ class Recent_K_Sampler:
         ts_chunks_selected = torch.cat(ts_chunks_list, dim=0)  # [num_chunks, chunk_size]
         eid_chunks_selected = torch.cat(eid_chunks_list, dim=0)
 
-        max_chunk_id = torch.max(all_needed_chunk_ids).item() + 1
-        global_to_local = torch.full((max_chunk_id,), -1, dtype=torch.long, device=all_needed_chunk_ids.device)
-        global_to_local[all_needed_chunk_ids] = torch.arange(all_needed_chunk_ids.size(0), device=all_needed_chunk_ids.device)
+        # max_chunk_id = torch.max(all_needed_chunk_ids).item() + 1
+        # global_to_local = torch.full((max_chunk_id,), -1, dtype=torch.long, device=all_needed_chunk_ids.device)
+        # global_to_local[all_needed_chunk_ids] = torch.arange(all_needed_chunk_ids.size(0), device=all_needed_chunk_ids.device)
 
-        chunk_ids_local = global_to_local[chunk_ids]
+        # chunk_ids_local = global_to_local[chunk_ids]
 
-        index_and_flag = sampler.find_index_in_chunk(
-            ts_chunks_selected[chunk_ids_local],
+        # index_and_flag = sampler.find_index_in_chunk(
+        #     ts_chunks_selected[chunk_ids_local],
+        #     root_ts,
+        #     self.ts_chunks_all_cpu.shape[-1],
+        #     k
+        # )
+        # index_in_chunk = index_and_flag[:, 0]
+        # is_previous_chunk_needed = index_and_flag[:, 1].bool()
+
+        # previous_chunk_ids_local = torch.where(
+        #     (previous_chunk_ids != -1) & (is_previous_chunk_needed),
+        #     global_to_local[previous_chunk_ids],
+        #     torch.full_like(previous_chunk_ids, -1)
+        # )
+
+        # collected_ts_indices = sampler.collect_prev_k_ts(
+        #     chunk_ids_local,
+        #     previous_chunk_ids_local,
+        #     index_in_chunk,
+        #     ts_chunks_selected,
+        #     self.ts_chunks_all_cpu.shape[-1],
+        #     k
+        # )
+
+        
+        collected_ts_indices_2 = sampler.fused_find_and_collect(
+            ts_chunks_selected,
+            chunk_ids,
+            previous_chunk_ids,
             root_ts,
             self.ts_chunks_all_cpu.shape[-1],
             k
         )
-        index_in_chunk = index_and_flag[:, 0]
-        is_previous_chunk_needed = index_and_flag[:, 1].bool()
-
-        previous_chunk_ids_local = torch.where(
-            (previous_chunk_ids != -1) & (is_previous_chunk_needed),
-            global_to_local[previous_chunk_ids],
-            torch.full_like(previous_chunk_ids, -1)
-        )
-
-        collected_ts_indices = sampler.collect_prev_k_ts(
-            chunk_ids_local,
-            previous_chunk_ids_local,
-            index_in_chunk,
-            ts_chunks_selected,
-            self.ts_chunks_all_cpu.shape[-1],
-            k
-        )
-
+        # breakpbreakpointoint()
         eid_chunks_flattened = eid_chunks_selected.flatten()
-        collected_eid_values = eid_chunks_flattened[collected_ts_indices]
+        # collected_eid_values = eid_chunks_flattened[collected_ts_indices]
+        collected_eid_values = eid_chunks_flattened[collected_ts_indices_2]
+        # print(collected_eid_values == collected_eid_values_2)
+
+
 
         return collected_eid_values

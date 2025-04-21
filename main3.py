@@ -25,7 +25,7 @@ def main():
     eid_list = eid.tolist()
 
 
-    output = preprocessor.preprocess(
+    tci_data = preprocessor.preprocess(
         src_list,
         dst_list,
         ts_list,
@@ -35,7 +35,7 @@ def main():
         max_chunk_per_node
     )
 
-    sampler = Recent_K_Sampler(output, max_chunk_per_node, k)
+    sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, k)
     root_node = torch.tensor([0, 1, 2, 3, 4, 1, 1, 0], dtype=torch.long, device='cuda')
     root_ts = torch.tensor([200.0, 115.0, 130.0, 140.0, 10.0, 56.0, 150.0, 10.0], dtype=torch.float64, device='cuda')
 
@@ -43,7 +43,7 @@ def main():
     print(samples)
 
 
-    
+    breakpoint()
 
 if __name__ == "__main__":
     main()

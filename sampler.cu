@@ -600,9 +600,107 @@ at::Tensor collect_prev_k_ts(
 }
 
 
+
+
+
+
+
+
+__global__ void fused_find_and_collect_kernel(
+    const double* __restrict__ ts_chunks_selected,
+    const int64_t* __restrict__ chunk_ids,
+    const int64_t* __restrict__ previous_chunk_ids,
+    const double* __restrict__ root_ts,
+    int64_t* __restrict__ output_ts_indices,
+    int batch_size,
+    int chunk_size,
+    int k
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batch_size) return;
+
+    double query_ts = root_ts[idx];
+    int64_t cur_chunk_id = chunk_ids[idx];
+    int64_t prev_chunk_id = previous_chunk_ids[idx];
+
+    // Pointer to current chunk
+    const double* chunk_ptr = ts_chunks_selected + cur_chunk_id * chunk_size;
+
+    // Step 1: Binary search to find best_idx within current chunk
+    int left = 0, right = chunk_size - 1;
+    int64_t best_idx = -1;
+
+    while (left <= right) {
+        int mid = (left + right) / 2;
+        double val = chunk_ptr[mid];
+
+        if (val < query_ts) {
+            best_idx = mid;
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+
+    // Step 2: Collect k timestamps
+    int collected = 0;
+    bool switched_to_prev = false;
+
+    while (collected < k) {
+        if (best_idx >= 0) {
+            output_ts_indices[idx * k + collected] = cur_chunk_id * chunk_size + best_idx;
+            best_idx--;
+            collected++;
+        }
+        else if (!switched_to_prev && prev_chunk_id != -1) {
+            // Switch to previous chunk
+            cur_chunk_id = prev_chunk_id;
+            chunk_ptr = ts_chunks_selected + cur_chunk_id * chunk_size;
+            best_idx = chunk_size - 1;
+            switched_to_prev = true;
+        }
+        else {
+            // No more timestamps available
+            output_ts_indices[idx * k + collected] = -1;
+            collected++;
+        }
+    }
+}
+
+at::Tensor fused_find_and_collect(
+    at::Tensor ts_chunks_selected,
+    at::Tensor chunk_ids,
+    at::Tensor previous_chunk_ids,
+    at::Tensor root_ts,
+    int chunk_size,
+    int k
+) {
+    const int batch_size = chunk_ids.size(0);
+
+    auto output = torch::full({batch_size, k}, -1, torch::dtype(torch::kInt64).device(ts_chunks_selected.device()));
+
+    const int threads = 256;
+    const int blocks = (batch_size + threads - 1) / threads;
+
+    fused_find_and_collect_kernel<<<blocks, threads>>>(
+        ts_chunks_selected.data_ptr<double>(),
+        chunk_ids.data_ptr<int64_t>(),
+        previous_chunk_ids.data_ptr<int64_t>(),
+        root_ts.data_ptr<double>(),
+        output.data_ptr<int64_t>(),
+        batch_size,
+        chunk_size,
+        k
+    );
+
+    return output;
+}
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("find_chunk_from_last_ts", &find_chunk_from_last_ts, "Find chunk id using last timestamp");
     m.def("find_index_in_chunk", &find_index_in_chunk, "Find chunk id using last timestamp");
     m.def("collect_prev_k_ts", &collect_prev_k_ts, "Collect previous k timestamps across chunks");
+    m.def("fused_find_and_collect", &fused_find_and_collect, "find index and then collect previous k events");
 
 }
