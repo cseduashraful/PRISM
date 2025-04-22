@@ -6,16 +6,14 @@ from modules.memory_module import DAATGNMemory
 # from modules.neg_sampler import NegLinkSamplerDest
 from modules.emb_module import GraphAttentionEmbedding
 # from modules.early_stopping import EarlyStopMonitor
-from modules.msg_agg import LastAggregator, MeanAggregator
+from modules.msg_agg import LastAggregator, MeanAggregator as Agg, AttentionAggregator, AttentionAggregator_v2
 from modules.msg_func import IdentityMessage, MLPMessage
 from modules.decoder import LinkPredictor
-# from modules.train_utils import train, test
-# from sampler_core import ParallelSampler
-
 
 from tgb.utils.utils import get_args, set_random_seed, save_results
 import numpy as np
 import torch
+
 import timeit
 import os
 import os.path as osp
@@ -97,7 +95,7 @@ def main():
             MEM_DIM,
             TIME_DIM,
             message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
-            aggregator_module=MeanAggregator(),
+            aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
         ).to(device)
 
         gnn = GraphAttentionEmbedding(
