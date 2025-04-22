@@ -1,16 +1,14 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
 from modules.train_utils import train
-from modules.neg_sampler import NegLinkSamplerDest
-
+from modules.memory_module import DAATGNMemory
 
 # from modules.neg_sampler import NegLinkSamplerDest
-# from modules.emb_module import GraphAttentionEmbedding
-# from modules.memory_module import DAATGNMemory
+from modules.emb_module import GraphAttentionEmbedding
 # from modules.early_stopping import EarlyStopMonitor
-# from modules.msg_agg import LastAggregator, MeanAggregator
-# from modules.msg_func import IdentityMessage, MLPMessage
-# from modules.decoder import LinkPredictor
+from modules.msg_agg import LastAggregator, MeanAggregator
+from modules.msg_func import IdentityMessage, MLPMessage
+from modules.decoder import LinkPredictor
 # from modules.train_utils import train, test
 # from sampler_core import ParallelSampler
 
@@ -33,7 +31,7 @@ def main():
     DATA = args.data
     print("INFO: Arguments:", args)
 
-    LR = args.lr #max(args.lr, (args.lr*args.bs)/200)
+    LR = max(args.lr, (args.lr*args.bs)/200)
     BATCH_SIZE = args.bs
     K_VALUE = args.k_value  
     NUM_EPOCH = args.num_epoch
@@ -54,7 +52,7 @@ def main():
     data = dataset['data']
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
-    neg_dest_sampler = NegLinkSamplerDest(unique_destination_nodes)
+    # neg_dest_sampler = NegLinkSamplerDest(unique_destination_nodes)
 
 
     chunk_size = 256
@@ -93,34 +91,34 @@ def main():
         # set the seed for deterministic results...
         torch.manual_seed(run_idx + SEED)
         set_random_seed(run_idx + SEED)
-        # memory = DAATGNMemory(
-        #     data.num_nodes,
-        #     data.msg.size(-1),
-        #     MEM_DIM,
-        #     TIME_DIM,
-        #     message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
-        #     aggregator_module=MeanAggregator(),
-        # ).to(device)
+        memory = DAATGNMemory(
+            data.num_nodes,
+            data.msg.size(-1),
+            MEM_DIM,
+            TIME_DIM,
+            message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
+            aggregator_module=MeanAggregator(),
+        ).to(device)
 
-        # gnn = GraphAttentionEmbedding(
-        #     in_channels=MEM_DIM,
-        #     out_channels=EMB_DIM,
-        #     msg_dim=data.msg.size(-1),
-        #     time_enc=memory.time_enc,
-        # ).to(device)
+        gnn = GraphAttentionEmbedding(
+            in_channels=MEM_DIM,
+            out_channels=EMB_DIM,
+            msg_dim=data.msg.size(-1),
+            time_enc=memory.time_enc,
+        ).to(device)
 
-        # link_pred = LinkPredictor(in_channels=EMB_DIM).to(device)
+        link_pred = LinkPredictor(in_channels=EMB_DIM).to(device)
 
-        # model = {'memory': memory,
-        #         'gnn': gnn,
-        #         'link_pred': link_pred}
+        model = {'memory': memory,
+                'gnn': gnn,
+                'link_pred': link_pred}
 
-        # optimizer = torch.optim.Adam(
-        #     set(model['memory'].parameters()) | set(model['gnn'].parameters()) | set(model['link_pred'].parameters()),
-        #     lr=LR,
-        # )
+        optimizer = torch.optim.Adam(
+            set(model['memory'].parameters()) | set(model['gnn'].parameters()) | set(model['link_pred'].parameters()),
+            lr=LR,
+        )
 
-        # criterion = torch.nn.BCEWithLogitsLoss()
+        criterion = torch.nn.BCEWithLogitsLoss()
 
         # Helper vector to map global node indices to local ones.
         # assoc = torch.empty(data.num_nodes, dtype=torch.long, device=device)
@@ -131,9 +129,9 @@ def main():
         # early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
         #                                 tolerance=TOLERANCE, patience=PATIENCE)
         targs = {
-            # 'model': model,
-            # 'optimizer':optimizer,
-            # 'criterion':criterion,
+            'model': model,
+            'optimizer':optimizer,
+            'criterion':criterion,
             'dataset': dataset,
             # 'assoc': assoc,
             'min_dst_idx': min_dst_idx,
