@@ -149,7 +149,7 @@ class Recent_K_Sampler_no_cache:
 
 
 class Recent_K_Sampler_without_prefetching:
-    def __init__(self, sampler_data, max_chunk_per_node, k, cache_size_limit=512):
+    def __init__(self, data, sampler_data, max_chunk_per_node, k, cache_size_limit=512):
         self.chunk_map = torch.tensor(sampler_data['chunk_map'], dtype=torch.long, device='cuda')
         self.chunk_last_ts = torch.tensor(sampler_data['chunk_last_ts'], dtype=torch.float64, device='cuda')
 
@@ -165,7 +165,7 @@ class Recent_K_Sampler_without_prefetching:
         self.eid_cache = {}    # chunk_id -> eid_chunk (on GPU)
         self.cache_size_limit = cache_size_limit  # limit how many chunks in cache
 
-        # self.sampler_data = sampler_data
+        self.sampler = data
 
     def _get_chunk(self, chunk_id):
         if chunk_id in self.chunk_cache:
@@ -270,10 +270,12 @@ class Recent_K_Sampler_without_prefetching:
 
 
 class Recent_K_Sampler:
-    def __init__(self, sampler_data, max_chunk_per_node, k, device='cuda'):
+    def __init__(self, sampler_data, max_chunk_per_node, k, num_nodes, device='cuda'):
         self.device = device
         self.max_chunk_per_node = max_chunk_per_node
         self.k = k
+        self.num_nodes = num_nodes
+        self.assoc = torch.arange(self.num_nodes, device = device)
 
         # Preprocess and store TCI structure on CPU
         self.chunk_map = torch.tensor(sampler_data['chunk_map'], dtype=torch.long, device=device)
@@ -281,6 +283,7 @@ class Recent_K_Sampler:
 
         self.ts_chunks_all_cpu = torch.tensor(sampler_data['ts_chunks'], dtype=torch.float64, pin_memory=True)
         self.eid_chunks_all_cpu = torch.tensor(sampler_data['eid_chunks'], dtype=torch.int64, pin_memory=True)
+        self.other_node_chunks_all_cpu = torch.tensor(sampler_data['other_node_chunks'], dtype=torch.int64, pin_memory=True)
 
         # CUDA streams
         self.prefetch_stream = torch.cuda.Stream(device=device)  # For background prefetching
@@ -289,7 +292,10 @@ class Recent_K_Sampler:
         # Double buffer: keep two prefetch slots
         self.prefetch_buffer_ts = [None, None]
         self.prefetch_buffer_eid = [None, None]
+        self.prefetch_buffer_other_node = [None, None]
         self.current_prefetch_idx = 0
+
+        # self.data = data
 
     def _select_and_prefetch(self, root_node, root_ts):
         """Internal: Select chunks and async prefetch pinned CPU -> GPU"""
@@ -311,6 +317,7 @@ class Recent_K_Sampler:
         # Step 2: Create CPU slices
         ts_chunks_selected_cpu = self.ts_chunks_all_cpu[all_needed_chunk_ids.cpu()]
         eid_chunks_selected_cpu = self.eid_chunks_all_cpu[all_needed_chunk_ids.cpu()]
+        other_node_chunks_selected_cpu = self.other_node_chunks_all_cpu[all_needed_chunk_ids.cpu()]
 
         # Step 3: Allocate prefetch slot
         slot = self.current_prefetch_idx
@@ -319,6 +326,7 @@ class Recent_K_Sampler:
         with torch.cuda.stream(self.prefetch_stream):
             self.prefetch_buffer_ts[slot] = ts_chunks_selected_cpu.to(self.device, non_blocking=True)
             self.prefetch_buffer_eid[slot] = eid_chunks_selected_cpu.to(self.device, non_blocking=True)
+            self.prefetch_buffer_other_node[slot] = other_node_chunks_selected_cpu.to(self.device, non_blocking=True)
 
         # Step 5: Record needed mapping
         max_chunk_id = torch.max(all_needed_chunk_ids).item() + 1
@@ -343,6 +351,7 @@ class Recent_K_Sampler:
         slot = self.current_prefetch_idx
         ts_chunks_selected = self.prefetch_buffer_ts[slot]
         eid_chunks_selected = self.prefetch_buffer_eid[slot]
+        other_node_chunks_selected = self.prefetch_buffer_other_node[slot]
 
         chunk_ids_local = global_to_local[chunk_ids]
         previous_chunk_ids_local = torch.where(
@@ -362,9 +371,70 @@ class Recent_K_Sampler:
         )
 
         eid_chunks_flattened = eid_chunks_selected.flatten()
+        other_node_chunks_flattened = other_node_chunks_selected.flatten()
+
         sampled_eids = eid_chunks_flattened[collected_ts_indices]
+        sampled_other_nodes = other_node_chunks_flattened[collected_ts_indices]
 
         # Step 5: Rotate prefetch buffer for next batch
         self.current_prefetch_idx = (self.current_prefetch_idx + 1) % 2
 
-        return sampled_eids
+        return self.transform_eids(sampled_eids, sampled_other_nodes, root_node)
+    
+
+    def transform_eids_old(self, sampled_eids, sampled_other_nodes, root_node):
+        batch_size, k = sampled_eids.shape
+
+        # Step 1: Flatten eids and filter valid
+        eids = sampled_eids.view(-1)
+        valid_mask = eids != -1
+        valid_eids = eids[valid_mask].cpu()
+        on = sampled_other_nodes.view(-1)[valid_mask].unique()
+        self.assoc[on] = torch.arange(root_node.shape[0], root_node.shape[0]+on.shape[0], device = self.device)
+        
+        mapped_sampled_other_nodes  = self.assoc[sampled_other_nodes]
+        edge_index_dst = torch.arange(root_node.shape[0], device=self.device).unsqueeze(1).expand(root_node.shape[0], k)
+
+        edge_index = torch.stack([mapped_sampled_other_nodes.view(-1)[valid_mask],edge_index_dst.reshape(-1)[valid_mask]], dim=0)
+        n_ids = torch.cat([root_node, on])
+
+        return n_ids, valid_eids, edge_index
+
+    def transform_eids(self, sampled_eids, sampled_other_nodes, root_node):
+        batch_size, k = sampled_eids.shape
+
+        # Step 1: Flatten and find valid entries
+        eids_flat = sampled_eids.view(-1)
+        other_nodes_flat = sampled_other_nodes.view(-1)
+
+        valid_mask = (eids_flat != -1)
+        valid_eids = eids_flat[valid_mask].cpu()
+        valid_other_nodes = other_nodes_flat[valid_mask]
+
+        # Step 2: Always update assoc mapping (even if already present)
+        on = valid_other_nodes.unique()
+        self.assoc[on] = torch.arange(root_node.shape[0], root_node.shape[0] + on.shape[0], device=self.device)
+
+        # Step 3: Map sampled other nodes
+        mapped_other_nodes = self.assoc[other_nodes_flat]
+
+        # Step 4: Build edge indices
+        edge_index_dst = torch.arange(root_node.shape[0], device=self.device).unsqueeze(1).expand(root_node.shape[0], k)
+        edge_index_dst = edge_index_dst.reshape(-1)
+
+        edge_index = torch.stack([mapped_other_nodes[valid_mask], edge_index_dst[valid_mask]], dim=0)
+
+        # Step 5: Concatenate n_ids (root_node + all sampled other nodes ONCE)
+
+        n_ids = torch.cat([root_node, on])
+
+        # x, y, z = self.transform_eids_old(sampled_eids, sampled_other_nodes, root_node)
+        # if torch.all(x == n_ids) and torch.all(y == valid_eids) and torch.all(z == edge_index):
+        #     print("OK")
+        # else:
+        #     breakpoint()
+
+        return n_ids, valid_eids, edge_index
+
+
+
