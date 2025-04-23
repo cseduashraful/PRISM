@@ -19,6 +19,10 @@ __global__ void find_chunk_from_last_ts_kernel(
 
     int64_t node = node_ids[idx];
     double ts = timestamps[idx];
+    // if(ts<1000)
+    //     printf("Thread %d: node = %lld, ts = %f\n", idx, node, ts);
+
+    // std::cout<<node<<"--"<<ts<<std::endl;
 
     int left = 0, right = max_chunk_per_node - 1;
     int64_t found_chunk = -1;
@@ -75,54 +79,6 @@ __global__ void find_chunk_from_last_ts_kernel(
     }
 }
 
-// __global__ void find_chunk_from_last_ts_kernel(
-//     const int64_t* node_ids,
-//     const double* timestamps,
-//     const int64_t* chunk_map,
-//     const double* chunk_last_ts,
-//     int64_t* output_chunk_ids,
-//     int64_t* output_previous_chunk_ids,
-//     int num_queries,
-//     int max_chunk_per_node
-// ) {
-//     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (idx >= num_queries) return;
-
-//     int64_t node = node_ids[idx];
-//     double ts = timestamps[idx];
-
-//     int left = 0, right = max_chunk_per_node - 1;
-//     int64_t found_chunk = -1;
-//     int found_slot = -1;
-
-//     while (left <= right) {
-//         int mid = (left + right) / 2;
-//         int64_t chunk_id = chunk_map[node * max_chunk_per_node + mid];
-//         double last_ts = chunk_last_ts[node * max_chunk_per_node + mid];
-
-//         if (chunk_id == -1) {
-//             right = mid - 1;
-//             continue;
-//         }
-
-//         if (last_ts >= ts) {
-//             found_chunk = chunk_id;
-//             found_slot = mid;
-//             right = mid - 1;
-//         } else {
-//             left = mid + 1;
-//         }
-//     }
-
-//     output_chunk_ids[idx] = found_chunk;
-
-//     if (found_slot > 0) {
-//         output_previous_chunk_ids[idx] = chunk_map[node * max_chunk_per_node + (found_slot - 1)];
-//     } else {
-//         output_previous_chunk_ids[idx] = -1;
-//     }
-// }
-
 
 std::vector<at::Tensor> find_chunk_from_last_ts(
     at::Tensor node_ids,
@@ -139,6 +95,39 @@ std::vector<at::Tensor> find_chunk_from_last_ts(
     const int threads = 256;
     const int blocks = (num_queries + threads - 1) / threads;
 
+    //     // Move to CPU (if not already)
+    // auto node_ids_cpu = node_ids.to(torch::kCPU);
+
+    // // Access raw data pointer
+    // auto node_ids_accessor = node_ids_cpu.accessor<int64_t, 1>();
+
+    // int64_t min_node = node_ids_accessor[0];
+    // int64_t max_node = node_ids_accessor[0];
+
+    // for (int i = 1; i < node_ids_cpu.size(0); ++i) {
+    //     int64_t val = node_ids_accessor[i];
+    //     if (val < min_node) min_node = val;
+    //     if (val > max_node) max_node = val;
+    // }
+
+    // std::cout << "[Debug] node_ids min: " << min_node << ", max: " << max_node << std::endl;
+
+    // Ensure it's on CPU
+// auto timestamps_cpu = timestamps.to(torch::kCPU);
+
+// // Use accessor to iterate
+// auto accessor = timestamps_cpu.accessor<double, 1>();
+
+// std::cout << "size: " <<timestamps_cpu.size(0)<<std::endl;
+// std::cout << "[Debug] timestamps: [";
+
+// for (int i = 0; i < timestamps_cpu.size(0); ++i) {
+//     std::cout << accessor[i];
+//     if (i < timestamps_cpu.size(0) - 1) std::cout << ", ";
+// }
+// std::cout << "]" << std::endl;
+
+
     find_chunk_from_last_ts_kernel<<<blocks, threads>>>(
         node_ids.data_ptr<int64_t>(),
         timestamps.data_ptr<double>(),
@@ -149,6 +138,20 @@ std::vector<at::Tensor> find_chunk_from_last_ts(
         num_queries,
         max_chunk_per_node
     );
+
+//     cudaDeviceSynchronize();  // Ensure kernel has finished before accessing memory
+//     std::cout << "__________ kernel calls completed ___________________"<<std::endl;
+
+// auto output_cpu = output_chunk_ids.to(torch::kCPU);
+// auto accessor = output_cpu.accessor<int64_t, 1>();
+
+// std::cout << "[Debug] output_chunk_ids: [";
+// for (int i = 0; i < output_cpu.size(0); ++i) {
+//     std::cout << accessor[i];
+//     if (i < output_cpu.size(0) - 1) std::cout << ", ";
+// }
+// std::cout << "]" << std::endl;
+
 
     return {output_chunk_ids, output_previous_chunk_ids};
 }

@@ -1,12 +1,12 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
-from modules.train_utils import train
+from modules.train_utils import train, test
 from modules.memory_module import DAATGNMemory
 
 # from modules.neg_sampler import NegLinkSamplerDest
 from modules.emb_module import GraphAttentionEmbedding
 # from modules.early_stopping import EarlyStopMonitor
-from modules.msg_agg import LastAggregator, MeanAggregator as Agg, AttentionAggregator, AttentionAggregator_v2
+from modules.msg_agg import LastAggregator, MeanAggregator, AttentionAggregator as Agg, AttentionAggregator_v2
 from modules.msg_func import IdentityMessage, MLPMessage
 from modules.decoder import LinkPredictor
 
@@ -46,7 +46,7 @@ def main():
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = False)
+    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = True)
     data = dataset['data']
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
@@ -56,8 +56,8 @@ def main():
     chunk_size = 256
     items = torch.cat([data.src, data.dst])
     unique_elements, counts = torch.unique(items, return_counts=True)
-    max_freq = counts.max().item()+chunk_size
-    max_chunk_per_node = max_freq//chunk_size
+    max_freq = counts.max().item()
+    max_chunk_per_node = 1+max_freq//chunk_size
     # breakpoint()
     print("Converting data to tci data.")
     start_epoch_train = timeit.default_timer()
@@ -71,6 +71,28 @@ def main():
         max_chunk_per_node
     )
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
+
+
+    # output = tci_data
+    # chunk_map = torch.tensor(output['chunk_map'], dtype=torch.long)
+    # # Count valid chunks per node (non -1 values)
+    # valid_chunk_counts = (chunk_map != -1).sum(dim=1)
+
+    # # Get min/max values and corresponding node indices
+    # min_chunks = valid_chunk_counts.min().item()
+    # max_chunks = valid_chunk_counts.max().item()
+
+    # min_nodes = (valid_chunk_counts == min_chunks).nonzero(as_tuple=True)[0].tolist()
+    # max_nodes = (valid_chunk_counts == max_chunks).nonzero(as_tuple=True)[0].tolist()
+
+    # print(f"[Info] Valid chunk counts per node:\n{valid_chunk_counts.tolist()}")
+    # print(f"[Info] Minimum valid chunks: {min_chunks}, Nodes: {min_nodes}")
+    # print(f"[Info] Maximum valid chunks: {max_chunks}, Nodes: {max_nodes}")
+
+    # breakpoint()
+
+
+
     # breakpoint()
     sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes)
        # for saving the results...
@@ -144,6 +166,11 @@ def main():
             print(
                 f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
             )
+            perf_metric_val = test(targs, split_mode="val")
+            print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
+            # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
+            # val_perf_list.append(perf_metric_val)
+
 
 
 

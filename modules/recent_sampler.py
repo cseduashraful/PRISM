@@ -301,6 +301,11 @@ class Recent_K_Sampler:
         """Internal: Select chunks and async prefetch pinned CPU -> GPU"""
 
         # Step 1: Find chunk ids needed
+        # breakpoint()
+        # print("root node: ", root_node)
+        # print("root ts: ", root_ts)
+#         chunk_map = chunk_map.contiguous()
+# chunk_last_ts = chunk_last_ts.contiguous()
         chunk_ids, previous_chunk_ids = sampler.find_chunk_from_last_ts(
             root_node,
             root_ts,
@@ -308,6 +313,13 @@ class Recent_K_Sampler:
             self.chunk_last_ts,
             self.max_chunk_per_node
         )
+        # breakpoint()
+        # print("after")
+        # print("previous_chunk_ids: ", previous_chunk_ids)
+        # print("chunk_ids: ", chunk_ids)
+        
+        # breakpoint()
+        # breakpoint()
 
         all_chunk_ids = torch.cat([chunk_ids, previous_chunk_ids], dim=0)
         valid_mask = all_chunk_ids != -1
