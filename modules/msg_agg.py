@@ -63,7 +63,9 @@ class AttentionAggregator(torch.nn.Module):
         Returns:
             Aggregated node embeddings [dim_size, emb_dim]
         """
-        # Step 1: Compute attention scores
+        # Step 1: Compute attention 
+        # print("Index: ", index)
+        # breakpoint()
         att_score = self.att_mlp(msg).squeeze(-1)  # [num_messages]
 
         # Step 2: Normalize attention scores over neighbors
@@ -128,3 +130,39 @@ class AttentionAggregator_v2(torch.nn.Module):
 
 
 
+class TransformerAggregator(torch.nn.Module):
+    def __init__(self, emb_dim: int = 100, nhead: int = 2, dim_feedforward: int = 100, num_layers: int = 1):
+        super().__init__()
+        encoder_layer = torch.nn.TransformerEncoderLayer(
+            d_model=emb_dim, nhead=nhead, dim_feedforward=dim_feedforward, batch_first=True
+        )
+        self.encoder = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+    def forward(self, msg: Tensor, index: Tensor, t: Tensor, dim_size: int) -> Tensor:
+        if msg.size(0) == 0:
+        # Return zero embeddings if no messages to process
+            return msg.new_zeros((dim_size, msg.size(-1)))
+        # 1. Count messages per index (since index is sorted)
+        lengths = torch.bincount(index, minlength=dim_size)
+
+        # 2. Pack msg into padded sequences
+        max_len = lengths.max().item()
+        padded = msg.new_zeros((dim_size, max_len, msg.size(-1)))
+        mask = torch.ones((dim_size, max_len), dtype=torch.bool, device=msg.device)
+
+        curr = 0
+        for i in range(dim_size):
+            l = lengths[i]
+            if l > 0:
+                padded[i, :l] = msg[curr:curr + l]
+                mask[i, :l] = False  # Valid entries
+                curr += l
+
+        # 3. Apply transformer
+        out = self.encoder(padded, src_key_padding_mask=mask)
+
+        # 4. Pool final embeddings (e.g., take last non-masked)
+        last_indices = lengths - 1
+        final_out = out[torch.arange(dim_size), last_indices.clamp(min=0)]
+
+        return final_out

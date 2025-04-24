@@ -1,14 +1,16 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
-from modules.train_utils import train, test
+from modules.train_utils import train as actrain, test, train_with_custom_neg_sampler
 from modules.memory_module import DAATGNMemory
 
-# from modules.neg_sampler import NegLinkSamplerDest
+from modules.neg_sampler import NegLinkSamplerDest
 from modules.emb_module import GraphAttentionEmbedding
-# from modules.early_stopping import EarlyStopMonitor
-from modules.msg_agg import LastAggregator, MeanAggregator, AttentionAggregator as Agg, AttentionAggregator_v2
+from modules.early_stopping import EarlyStopMonitor
+from modules.msg_agg import LastAggregator, MeanAggregator, AttentionAggregator as Agg, TransformerAggregator
 from modules.msg_func import IdentityMessage, MLPMessage
 from modules.decoder import LinkPredictor
+
+# from torch.optim.lr_scheduler import StepLR
 
 from tgb.utils.utils import get_args, set_random_seed, save_results
 import numpy as np
@@ -50,7 +52,7 @@ def main():
     data = dataset['data']
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
-    # neg_dest_sampler = NegLinkSamplerDest(unique_destination_nodes)
+    neg_dest_sampler = NegLinkSamplerDest(unique_destination_nodes)
 
 
     chunk_size = 256
@@ -137,17 +139,19 @@ def main():
             set(model['memory'].parameters()) | set(model['gnn'].parameters()) | set(model['link_pred'].parameters()),
             lr=LR,
         )
+        # scheduler = StepLR(optimizer, step_size=10, gamma=0.1)  # decay LR by 0.1 every 10 epochs
+
 
         criterion = torch.nn.BCEWithLogitsLoss()
 
         # Helper vector to map global node indices to local ones.
         # assoc = torch.empty(data.num_nodes, dtype=torch.long, device=device)
 
-        # # define an early stopper
-        # save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
-        # save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}'
-        # early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
-        #                                 tolerance=TOLERANCE, patience=PATIENCE)
+        # define an early stopper
+        save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
+        save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}'
+        early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
+                                        tolerance=TOLERANCE, patience=PATIENCE)
         targs = {
             'model': model,
             'optimizer':optimizer,
@@ -158,18 +162,53 @@ def main():
             'max_dst_idx': max_dst_idx,
             'device': device,
             'sampler': sampler,
+            'neg_sampler': neg_dest_sampler,
         }
+        val_perf_list = []
+        start_train_val = timeit.default_timer()
         for epoch in range(1, NUM_EPOCH + 1):
             # training
             start_epoch_train = timeit.default_timer()
-            loss = train(targs)
+            loss = actrain(targs)
             print(
                 f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
             )
             perf_metric_val = test(targs, split_mode="val")
             print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
             # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
-            # val_perf_list.append(perf_metric_val)
+            val_perf_list.append(perf_metric_val)
+            # check for early stopping
+            if early_stopper.step_check(perf_metric_val, model):
+                break
+            
+        train_val_time = timeit.default_timer() - start_train_val
+        print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
+
+        # ==================================================== Test
+        # first, load the best model
+        early_stopper.load_checkpoint(model)
+         # final testing
+        start_test = timeit.default_timer()
+        perf_metric_test = test(split_mode="test")
+
+        print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+        print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+        test_time = timeit.default_timer() - start_test
+        print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
+
+        save_results({'model': MODEL_NAME,
+                    'data': DATA,
+                    'run': run_idx,
+                    'seed': SEED,
+                    f'val {dataset["metric"]}': val_perf_list,
+                    f'test {dataset["metric"]}': perf_metric_test,
+                    'test_time': test_time,
+                    'tot_train_val_time': train_val_time
+                    }, 
+        results_filename)
+
+        print(f"INFO: >>>>> Run: {run_idx}, elapsed time: {timeit.default_timer() - start_run: .4f} <<<<<")
+        print('-------------------------------------------------------------------------------')
 
 
 
@@ -177,7 +216,8 @@ def main():
 
 
 
-    breakpoint()
+
+    # breakpoint()
 
 
     

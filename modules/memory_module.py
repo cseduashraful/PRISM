@@ -126,7 +126,7 @@ class DAATGNMemory(torch.nn.Module):
         self.memory[n_id] = memory
         self.last_update[n_id] = last_update
 
-    def _intra_batch_compute_msg(self, all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, bm):
+    def _intra_batch_compute_msg(self, all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, bm, msg_module):
         msrc_s = b_edge_index[1][b_isrc]
         src_s = all_n_id[msrc_s]
         dst_s = all_n_id[b_edge_index[0][b_isrc]]
@@ -134,7 +134,7 @@ class DAATGNMemory(torch.nn.Module):
         t_s = b_t[b_isrc]
         t_rel_s = t_s - last_update[self._assoc[src_s]]
         t_enc_s = self.time_enc(t_rel_s.to(raw_msg_s.dtype))
-        msg_s = self.msg_s_module(bm[self._assoc[src_s]], bm[self._assoc[dst_s]], raw_msg_s, t_enc_s)
+        msg_s = msg_module(bm[self._assoc[src_s]], bm[self._assoc[dst_s]], raw_msg_s, t_enc_s)
 
         return msg_s, t_s, src_s, dst_s, msrc_s
 
@@ -151,8 +151,8 @@ class DAATGNMemory(torch.nn.Module):
 
         # breakpoint()
 
-        msg_s, t_s, src_s, dst_s, msrc_s  = self._intra_batch_compute_msg(all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, bm)
-        msg_d, t_d, src_d, dst_d, msrc_d  = self._intra_batch_compute_msg(all_n_id, b_edge_index, ~b_isrc, b_raw_msg, b_t, last_update, bm)
+        msg_s, t_s, src_s, dst_s, msrc_s  = self._intra_batch_compute_msg(all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, bm, self.msg_s_module)
+        msg_d, t_d, src_d, dst_d, msrc_d  = self._intra_batch_compute_msg(all_n_id, b_edge_index, ~b_isrc, b_raw_msg, b_t, last_update, bm, self.msg_d_module)
 
         # Aggregate messages.
         idx = torch.cat([msrc_s, msrc_d], dim=0).long()
