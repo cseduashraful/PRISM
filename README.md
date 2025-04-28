@@ -15,4 +15,4 @@ To build the prepocessor and sampler
 
 We built the Sampler on cuda 11.8
 
-# Address temporal discontinuity using aggregation
+# Address Intra-batch Temporal Discontinuity using Aggregation
