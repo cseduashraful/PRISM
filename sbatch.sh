@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -c 8  # Number of Cores per Task
 #SBATCH -p gpu  # Partition
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH -G 1  # Number of GPUs
 
 #SBATCH --constraint=a100
@@ -14,4 +14,4 @@
 module load conda/latest
 conda activate pyg
 
-python main.py --bs 8192 --data tgbl-review
+python main.py --bs 256 --data tgbl-review

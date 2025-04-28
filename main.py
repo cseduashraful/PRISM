@@ -44,7 +44,7 @@ def main():
     NUM_RUNS = 1#args.num_run
     NUM_NEIGHBORS = K_VALUE
     MODEL_NAME = 'TGN'
-    MAX_TR_TIME = 1020
+    MAX_TR_TIME = 24*60*60
     # ==========
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

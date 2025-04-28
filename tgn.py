@@ -29,7 +29,7 @@ from tgb.linkproppred.evaluate import Evaluator
 from modules.decoder import LinkPredictor
 from modules.emb_module import GraphAttentionEmbedding
 from modules.msg_func import IdentityMessage
-from modules.msg_agg import LastAggregator
+from modules.msg_agg import LastAggregator, MeanAggregator as Agg
 from modules.neighbor_loader import LastNeighborLoader
 from modules.memory_module import TGNMemory
 from modules.early_stopping import  EarlyStopMonitor
@@ -204,7 +204,7 @@ TOLERANCE = args.tolerance
 PATIENCE = args.patience
 NUM_RUNS = 1#args.num_run
 NUM_NEIGHBORS = 10
-MAX_TR_TIME = 1020
+MAX_TR_TIME = 24*60*60
 
 
 MODEL_NAME = 'TGN'
@@ -268,7 +268,7 @@ for run_idx in range(NUM_RUNS):
         MEM_DIM,
         TIME_DIM,
         message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
-        aggregator_module=LastAggregator(),
+        aggregator_module=Agg(),
     ).to(device)
 
     gnn = GraphAttentionEmbedding(
