@@ -413,6 +413,7 @@ class Recent_K_Sampler:
         return n_ids, valid_eids, edge_index
 
     def transform_eids(self, sampled_eids, sampled_other_nodes, root_node):
+        # breakpoint()
         batch_size, k = sampled_eids.shape
 
         # Step 1: Flatten and find valid entries

@@ -171,7 +171,7 @@ class DAATGNMemory(torch.nn.Module):
         # # Get local copy of updated `last_update`.
         # dim_size = self.last_update.size(0)
         # last_update = scatter(t, idx, 0, dim_size, reduce="max")[n_id]
-
+        # breakpoint()
         return memory, last_update
 
 

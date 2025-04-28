@@ -258,7 +258,7 @@ def test(targs, split_mode):
             n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts.contiguous())
             
 
-            bmsk = dataset['data'].t[e_id]>pos_batch.t[0].cpu()
+            bmsk = dataset['data'].t[e_id]>=pos_batch.t[0].cpu()
             b_edge_index = edge_index[:,bmsk]
             b_eid = e_id[bmsk]
             b_t = dataset['data'].t[b_eid].to(device)

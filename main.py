@@ -6,7 +6,7 @@ from modules.memory_module import DAATGNMemory
 from modules.neg_sampler import NegLinkSamplerDest
 from modules.emb_module import GraphAttentionEmbedding
 from modules.early_stopping import EarlyStopMonitor
-from modules.msg_agg import LastAggregator, MeanAggregator, AttentionAggregator as Agg, TransformerAggregator
+from modules.msg_agg import LastAggregator, MeanAggregator as Agg, AttentionAggregator, TransformerAggregator
 from modules.msg_func import IdentityMessage, MLPMessage
 from modules.decoder import LinkPredictor
 
@@ -34,21 +34,22 @@ def main():
     LR = max(args.lr, (args.lr*args.bs)/200)
     BATCH_SIZE = args.bs
     K_VALUE = args.k_value  
-    NUM_EPOCH = args.num_epoch
+    NUM_EPOCH = 1000#args.num_epoch
     SEED = args.seed
     MEM_DIM = args.mem_dim
     TIME_DIM = args.time_dim
     EMB_DIM = args.emb_dim
     TOLERANCE = args.tolerance
     PATIENCE = args.patience
-    NUM_RUNS = args.num_run
+    NUM_RUNS = 1#args.num_run
     NUM_NEIGHBORS = K_VALUE
     MODEL_NAME = 'TGN'
+    MAX_TR_TIME = 1020
     # ==========
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = True)
+    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = False)
     data = dataset['data']
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
@@ -166,49 +167,60 @@ def main():
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()
+        losses = []
+        tims = []
+        t_tims = 0
         for epoch in range(1, NUM_EPOCH + 1):
             # training
             start_epoch_train = timeit.default_timer()
             loss = actrain(targs)
+            tim = timeit.default_timer() - start_epoch_train
             print(
                 f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
             )
-            perf_metric_val = test(targs, split_mode="val")
-            print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
-            # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
-            val_perf_list.append(perf_metric_val)
-            # check for early stopping
-            if early_stopper.step_check(perf_metric_val, model):
+
+            tims.append(tim)
+            losses.append(loss)
+            t_tims += tim
+            if t_tims > MAX_TR_TIME:
                 break
+            # perf_metric_val = test(targs, split_mode="val")
+            # print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
+            # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
+            # val_perf_list.append(perf_metric_val)
+            # # check for early stopping
+            # if early_stopper.step_check(perf_metric_val, model):
+            #     break
             
         train_val_time = timeit.default_timer() - start_train_val
         print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
-
+        print("loss = ",losses)
+        print("time = ",tims)
         # ==================================================== Test
         # first, load the best model
-        early_stopper.load_checkpoint(model)
-         # final testing
-        start_test = timeit.default_timer()
-        perf_metric_test = test(split_mode="test")
+        # early_stopper.load_checkpoint(model)
+        #  # final testing
+        # start_test = timeit.default_timer()
+        # perf_metric_test = test(split_mode="test")
 
-        print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-        print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
-        test_time = timeit.default_timer() - start_test
-        print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
+        # print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+        # print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+        # test_time = timeit.default_timer() - start_test
+        # print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
 
-        save_results({'model': MODEL_NAME,
-                    'data': DATA,
-                    'run': run_idx,
-                    'seed': SEED,
-                    f'val {dataset["metric"]}': val_perf_list,
-                    f'test {dataset["metric"]}': perf_metric_test,
-                    'test_time': test_time,
-                    'tot_train_val_time': train_val_time
-                    }, 
-        results_filename)
+        # save_results({'model': MODEL_NAME,
+        #             'data': DATA,
+        #             'run': run_idx,
+        #             'seed': SEED,
+        #             f'val {dataset["metric"]}': val_perf_list,
+        #             f'test {dataset["metric"]}': perf_metric_test,
+        #             'test_time': test_time,
+        #             'tot_train_val_time': train_val_time
+        #             }, 
+        # results_filename)
 
-        print(f"INFO: >>>>> Run: {run_idx}, elapsed time: {timeit.default_timer() - start_run: .4f} <<<<<")
-        print('-------------------------------------------------------------------------------')
+        # print(f"INFO: >>>>> Run: {run_idx}, elapsed time: {timeit.default_timer() - start_run: .4f} <<<<<")
+        # print('-------------------------------------------------------------------------------')
 
 
 
