@@ -25,7 +25,7 @@ from torch_geometric.nn import TransformerConv
 
 # internal imports
 from tgb.utils.utils import get_args, set_random_seed, save_results
-from tgb.linkproppred.evaluate import Evaluator
+from modules.evaluate import Evaluator
 from modules.decoder import LinkPredictor
 from modules.emb_module import GraphAttentionEmbedding
 from modules.msg_func import IdentityMessage
@@ -33,7 +33,7 @@ from modules.msg_agg import LastAggregator, MeanAggregator as Agg
 from modules.neighbor_loader import LastNeighborLoader
 from modules.memory_module import TGNMemory
 from modules.early_stopping import  EarlyStopMonitor
-from tgb.linkproppred.dataset_pyg import PyGLinkPropPredDataset
+from modules.dataset_pyg import PyGLinkPropPredDataset
 
 
 # ==========
@@ -185,11 +185,12 @@ def test(loader, neg_sampler, split_mode):
 
 # Start...
 start_overall = timeit.default_timer()
-DATA = "tgbl-wiki"
+
 
 # ========== set parameters...
 args, _ = get_args()
-args.data = DATA
+# args.data = DATA
+DATA = args.data
 print("INFO: Arguments:", args)
 
 LR = LR = max(args.lr, (args.lr*args.bs)/200)#args.lr
