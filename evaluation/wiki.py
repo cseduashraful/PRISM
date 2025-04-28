@@ -70,11 +70,39 @@ data = {
 
 
 
-# Plotting
+# # Plotting
+# plt.figure(figsize=(14, 8))
+# for model_name, model_data in data.items():
+#     cumulative_time = pd.Series(model_data['time']).cumsum()
+#     plt.plot(cumulative_time, model_data['loss'], label=model_name)
+
+# plt.xlabel('Training Time (s)')
+# plt.ylabel('Loss')
+# plt.title('Training Loss vs. Training Time')
+# plt.legend()
+# plt.grid(True)
+# plt.tight_layout()
+# plt.show()
+# plt.savefig("wiki_loss.pdf", bbox_inches='tight')
+
+# Color mapping based on batch size
+color_map = {
+    '128': 'blue',
+    '256': 'green',
+    '512': 'red',
+    '1024': 'purple',
+    '2048': 'orange',
+    '4096': 'brown',
+    '8192': 'black'
+}
+
 plt.figure(figsize=(14, 8))
 for model_name, model_data in data.items():
+    batch_size = model_name.split('_')[-1]
+    model_type = 'TGN' if 'TGN' in model_name and 'SDA' not in model_name else 'SDA-TGN'
     cumulative_time = pd.Series(model_data['time']).cumsum()
-    plt.plot(cumulative_time, model_data['loss'], label=model_name)
+    linestyle = ':' if model_type == 'TGN' else '-'
+    plt.plot(cumulative_time, model_data['loss'], label=model_name, color=color_map[batch_size], linestyle=linestyle)
 
 plt.xlabel('Training Time (s)')
 plt.ylabel('Loss')
@@ -82,5 +110,4 @@ plt.title('Training Loss vs. Training Time')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.show()
 plt.savefig("wiki_loss.pdf", bbox_inches='tight')
