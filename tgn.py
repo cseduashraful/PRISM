@@ -205,7 +205,7 @@ TOLERANCE = args.tolerance
 PATIENCE = args.patience
 NUM_RUNS = 1#args.num_run
 NUM_NEIGHBORS = 10
-MAX_TR_TIME = 24*60*60
+MAX_TR_TIME = 12*60*60
 
 
 MODEL_NAME = 'TGN'
@@ -340,8 +340,8 @@ for run_idx in range(NUM_RUNS):
 
     train_val_time = timeit.default_timer() - start_train_val
     print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
-    print("loss = ",losses)
-    print("time = ",tims)
+    print("'loss' : ",losses,",")
+    print("'time' : ",tims,",")
 
 
 

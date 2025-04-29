@@ -147,7 +147,8 @@ class LinkPropPredDataset(object):
         elif self.name == "emailEucore":
             self.url = "https://drive.google.com/file/d/1wb0Dc90EjjjqJg4Pq_0FT9fJ0ExbPPlQ/view?usp=sharing"#"https://github.com/cseduashraful/datasets/raw/main/temporallinkpred/emailEucore/emailEucore.zip"
         elif self.name == "lastfm":
-            self.url = "https://github.com/cseduashraful/datasets/raw/main/temporallinkpred/lastfm/lastfm.zip"
+            self.url = "https://drive.google.com/file/d/1Fmqn_ajunZ69m0i_V-IdEsixc8KfIxCB/view?usp=sharing"
+            #"https://github.com/cseduashraful/datasets/raw/main/temporallinkpred/lastfm/lastfm.zip"
             # https://github.com/cseduashraful/datasets/blob/main/temporallinkpred/mooc/mooc.zip
         elif self.name == "reddit":
             self.url = "https://drive.google.com/file/d/1aBeDuV_hmqisbC1-9f4TP_ZwjPlwS8jA/view?usp=sharing"#"https://drive.google.com/file/d/1JV-2iNhLIeteG8bQzuqyiYLx0JIz0MEi/view?usp=sharing"#"https://github.com/cseduashraful/datasets/raw/main/temporallinkpred/reddit/reddit.zip"
