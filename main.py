@@ -43,8 +43,8 @@ def main():
     PATIENCE = args.patience
     NUM_RUNS = 1#args.num_run
     NUM_NEIGHBORS = K_VALUE
-    MODEL_NAME = 'TGN'
-    MAX_TR_TIME = 24*60*60
+    MODEL_NAME = 'SDA-TGN'
+    MAX_TR_TIME = 12*60*60
     # ==========
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,8 +194,8 @@ def main():
             
         train_val_time = timeit.default_timer() - start_train_val
         print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
-        print("loss = ",losses)
-        print("time = ",tims)
+        print("'loss' : ",losses,",")
+        print("'time' : ",tims, ",")
         # ==================================================== Test
         # first, load the best model
         # early_stopper.load_checkpoint(model)

@@ -86,15 +86,27 @@ data = {
 # plt.savefig("wiki_loss.pdf", bbox_inches='tight')
 
 # Color mapping based on batch size
+# color_map = {
+#     '128': 'blue',
+#     '256': 'green',
+#     '512': 'red',
+#     '1024': 'purple',
+#     '2048': 'orange',
+#     '4096': 'brown',
+#     '8192': 'black'
+# }
 color_map = {
-    '128': 'blue',
+    '128': 'magenta',
     '256': 'green',
     '512': 'red',
     '1024': 'purple',
     '2048': 'orange',
     '4096': 'brown',
-    '8192': 'black'
+    '8192': 'black',
+    '16384': 'teal',
+    '32768': 'crimson'
 }
+
 
 plt.figure(figsize=(14, 8))
 for model_name, model_data in data.items():
