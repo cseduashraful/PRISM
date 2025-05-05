@@ -193,7 +193,7 @@ args, _ = get_args()
 DATA = args.data
 print("INFO: Arguments:", args)
 
-LR = LR = max(args.lr, (args.lr*args.bs)/200)#args.lr
+LR = args.lr#max(args.lr, (args.lr*args.bs)/200)#args.lr
 BATCH_SIZE = args.bs
 K_VALUE = args.k_value  
 NUM_EPOCH = 1000#args.num_epoch

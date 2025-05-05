@@ -31,7 +31,7 @@ def main():
     DATA = args.data
     print("INFO: Arguments:", args)
 
-    LR = max(args.lr, (args.lr*args.bs)/200)
+    LR = args.lr#max(args.lr, (args.lr*args.bs)/200)
     BATCH_SIZE = args.bs
     K_VALUE = args.k_value  
     NUM_EPOCH = 1000#args.num_epoch

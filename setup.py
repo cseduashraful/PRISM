@@ -1,6 +1,9 @@
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CppExtension
 
+# # Optionally override architecture list if not set
+# os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.5;8.0")
+
 setup(
     name='multi_extensions_project',
     ext_modules=[
