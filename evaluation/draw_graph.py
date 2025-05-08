@@ -2,15 +2,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 color_map = {
-    '128': 'magenta',
-    '256': 'green',
-    '512': 'red',
-    '1024': 'purple',
-    '2048': 'orange',
-    '4096': 'brown',
-    '8192': 'black',
-    '16384': 'teal',
-    '32768': 'crimson'
+    '8':'hotpink',
+    '16':'magenta',
+    '32':'purple',
+    '64':'navy',
+    '128': 'dodgerblue',
+    '256': 'cyan',
+    '512': 'teal',
+    '1024': 'seagreen',
+    '2048': 'yellowgreen',
+    '4096': 'darkgoldenrod',
+    '8192': 'darkorange',
+    '16384': 'tomato',
+    '32768': 'brown',
+    '65536': 'dimgray',
 }
 
 def draw_loss_graph(dataset, data):
