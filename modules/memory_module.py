@@ -726,3 +726,49 @@ class DyRepMemory(torch.nn.Module):
                 torch.arange(self.num_nodes, device=self.memory.device))
             self._reset_message_store()
         super().train(mode)
+
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+from torch.nn import GRUCell, RNNCell
+from torch_scatter import scatter
+from typing import Callable, Tuple
+from collections import deque
+import copy
+
+class TimeEncoder(nn.Module):
+    def __init__(self, time_dim: int):
+        super().__init__()
+        self.lin = nn.Linear(1, time_dim)
+
+    def forward(self, t: Tensor) -> Tensor:
+        return torch.relu(self.lin(t.unsqueeze(-1)))
+
+    def reset_parameters(self):
+        self.lin.reset_parameters()
+
+class APANEncoder(nn.Module):
+    def __init__(self, dim: int, num_heads: int = 4):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, batch_first=True)
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.feedforward = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.ReLU(),
+            nn.Linear(dim, dim),
+        )
+
+    def forward(self, h_prev: Tensor, mailbox: Tensor) -> Tensor:
+        query = h_prev.unsqueeze(1)  # (B, 1, D)
+        key_value = mailbox         # (B, K, D)
+        attn_out, _ = self.attn(query, key_value, key_value)  # (B, 1, D)
+        attn_out = attn_out.squeeze(1)  # (B, D)
+        out = self.norm1(attn_out + h_prev)
+        out = self.norm2(self.feedforward(out) + out)
+        return out
+
+
+
+

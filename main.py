@@ -49,7 +49,7 @@ def main():
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = False)
+    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = True)
     data = dataset['data']
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
@@ -184,10 +184,10 @@ def main():
             t_tims += tim
             if t_tims > MAX_TR_TIME:
                 break
-            # perf_metric_val = test(targs, split_mode="val")
-            # print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
+            perf_metric_val = test(targs, split_mode="val")
+            print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
             # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
-            # val_perf_list.append(perf_metric_val)
+            val_perf_list.append(perf_metric_val)
             # # check for early stopping
             # if early_stopper.step_check(perf_metric_val, model):
             #     break

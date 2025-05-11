@@ -124,10 +124,14 @@ for model_name, model_data in data.items():
     linestyle = ':' if model_type == 'TGN' else '-'
     plt.plot(cumulative_time, model_data['loss'], label=model_name, color=color_map[batch_size], linestyle=linestyle)
 
-plt.xlabel('Training Time (s)')
-plt.ylabel('Loss')
-plt.title('Training Loss vs. Training Time')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.savefig(f"{dataset}_loss.pdf", bbox_inches='tight')
+# plt.xlabel('Training Time (s)')
+# plt.ylabel('Loss')
+# plt.title('Training Loss vs. Training Time')
+# plt.legend()
+# plt.grid(True)
+# plt.tight_layout()
+# plt.savefig(f"{dataset}_loss.pdf", bbox_inches='tight')
+
+
+from draw_graph import draw_loss_graph
+draw_loss_graph(dataset, data)
