@@ -728,25 +728,8 @@ class DyRepMemory(torch.nn.Module):
         super().train(mode)
 
 
-import torch
-import torch.nn as nn
-from torch import Tensor
-from torch.nn import GRUCell, RNNCell
-from torch_scatter import scatter
-from typing import Callable, Tuple
-from collections import deque
-import copy
 
-class TimeEncoder(nn.Module):
-    def __init__(self, time_dim: int):
-        super().__init__()
-        self.lin = nn.Linear(1, time_dim)
 
-    def forward(self, t: Tensor) -> Tensor:
-        return torch.relu(self.lin(t.unsqueeze(-1)))
-
-    def reset_parameters(self):
-        self.lin.reset_parameters()
 
 class APANEncoder(nn.Module):
     def __init__(self, dim: int, num_heads: int = 4):
@@ -761,14 +744,104 @@ class APANEncoder(nn.Module):
         )
 
     def forward(self, h_prev: Tensor, mailbox: Tensor) -> Tensor:
-        query = h_prev.unsqueeze(1)  # (B, 1, D)
-        key_value = mailbox         # (B, K, D)
-        attn_out, _ = self.attn(query, key_value, key_value)  # (B, 1, D)
-        attn_out = attn_out.squeeze(1)  # (B, D)
+        query = h_prev.unsqueeze(1)
+        key_value = mailbox
+        attn_out, _ = self.attn(query, key_value, key_value)
+        attn_out = attn_out.squeeze(1)
         out = self.norm1(attn_out + h_prev)
         out = self.norm2(self.feedforward(out) + out)
         return out
 
+class APANMemory(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        raw_msg_dim: int,
+        memory_dim: int,
+        time_dim: int,
+        message_module: Callable,
+        aggregator_module: Callable,
+        memory_updater_cell: str = "gru",
+        max_mailbox_size: int = 10,
+        num_heads: int = 4,
+    ):
+        super().__init__()
+        self.num_nodes = num_nodes
+        self.raw_msg_dim = raw_msg_dim
+        self.memory_dim = memory_dim
+        self.time_dim = time_dim
+        self.max_mailbox_size = max_mailbox_size
 
+        self.msg_module = message_module
+        self.aggr_module = aggregator_module
+        self.time_enc = TimeEncoder(time_dim)
 
+        if memory_updater_cell == "gru":
+            self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
+        elif memory_updater_cell == "rnn":
+            self.memory_updater = RNNCell(message_module.out_channels, memory_dim)
+        else:
+            raise ValueError("Undefined memory updater. Use 'gru' or 'rnn'.")
 
+        self.mail_proj = nn.Linear(memory_dim * 2 + raw_msg_dim, raw_msg_dim)
+        self.position_emb = nn.Embedding(max_mailbox_size, raw_msg_dim)
+        self.encoder = APANEncoder(raw_msg_dim, num_heads)
+
+        self.register_buffer("memory", torch.zeros(num_nodes, memory_dim))
+        self.register_buffer("last_update", torch.zeros(num_nodes, dtype=torch.long))
+        self._reset_message_store()
+
+    @property
+    def device(self):
+        return self.memory.device
+
+    def reset_parameters(self):
+        self.time_enc.reset_parameters()
+        self.memory_updater.reset_parameters()
+        self.mail_proj.reset_parameters()
+        self.position_emb.reset_parameters()
+        self.reset_state()
+
+    def reset_state(self):
+        self.memory.zero_()
+        self.last_update.zero_()
+        self._reset_message_store()
+
+    def _reset_message_store(self):
+        self.mailbox = {i: deque(maxlen=self.max_mailbox_size) for i in range(self.num_nodes)}
+
+    def forward(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
+        memory = self.memory[n_id]
+        last_update = self.last_update[n_id]
+        return memory, last_update
+
+    def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor):
+        n_id = dst.unique()
+        self._update_memory(n_id)
+        self._propagate_mail(src, dst, raw_msg)
+
+    def _update_memory(self, n_id: Tensor):
+        mailbox_tensor = self.get_mailbox_tensor(n_id)
+        h_prev = self.memory[n_id]
+        h_new = self.encoder(h_prev, mailbox_tensor)
+        self.memory[n_id] = h_new
+        self.last_update[n_id] = torch.max(self.last_update[n_id], torch.tensor(0).to(self.device))
+
+    def _propagate_mail(self, src: Tensor, dst: Tensor, raw_msg: Tensor):
+        for s, d, e_feat in zip(src.tolist(), dst.tolist(), raw_msg):
+            z_src = self.memory[s]
+            z_dst = self.memory[d]
+            mail_input = torch.cat([z_src, e_feat, z_dst]).unsqueeze(0)
+            mail = self.mail_proj(mail_input).squeeze(0).detach().clone()
+            self.mailbox[d].append(mail)
+
+    def get_mailbox_tensor(self, n_id: Tensor) -> Tensor:
+        B, D, K = len(n_id), self.raw_msg_dim, self.max_mailbox_size
+        out = self.memory.new_zeros(B, K, D)
+
+        for i, nid in enumerate(n_id.tolist()):
+            mails = list(self.mailbox[nid])
+            for j, msg in enumerate(mails):
+                if j >= K: break
+                out[i, j] = msg + self.position_emb(torch.tensor(j, device=self.device))
+        return out
