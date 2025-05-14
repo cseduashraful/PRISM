@@ -184,10 +184,10 @@ def main():
             t_tims += tim
             if t_tims > MAX_TR_TIME:
                 break
-            perf_metric_val = test(targs, split_mode="val")
-            print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
+            # perf_metric_val = test(targs, split_mode="val")
+            # print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
             # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
-            val_perf_list.append(perf_metric_val)
+            # val_perf_list.append(perf_metric_val)
             # # check for early stopping
             # if early_stopper.step_check(perf_metric_val, model):
             #     break

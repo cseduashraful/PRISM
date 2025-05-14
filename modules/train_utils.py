@@ -21,6 +21,7 @@ def train(targs):
     neighbor_loader = targs['sampler']
 
     total_loss = 0
+    max_seen_eid = -1
 
     for batch in train_loader:
         batch = batch.to(device)
@@ -41,8 +42,15 @@ def train(targs):
         # breakpoint()
 
 
-        bmsk = dataset['data'].t[e_id]>=batch.t[0].cpu()
+        # bmsk = dataset['data'].t[e_id]>=batch.t[0].cpu()
+
+        bmsk = e_id>max_seen_eid  #dataset['data'].t[e_id]>=batch.t[0].cpu()
         b_edge_index = edge_index[:,bmsk]
+        # ei_src = model['memory'].prep(n_id[b_edge_index[0,:]],b_edge_index[1,:] , src, pos_dst)
+        # b_edge_index_new = torch.stack([ei_src, b_edge_index[1, :]], dim=0)
+        # print(b_edge_index_new)
+        # breakpoint()
+
         b_eid = e_id[bmsk]
         b_t = dataset['data'].t[b_eid].to(device)
         b_raw_msg = dataset['data'].msg[b_eid].to(device)
@@ -83,6 +91,7 @@ def train(targs):
 
 
         total_loss += float(loss) * batch.num_events
+        max_seen_eid += batch.num_events
         # break
 
     # breakpoint()
@@ -131,6 +140,9 @@ def train_with_custom_neg_sampler(targs):
 
         bmsk = dataset['data'].t[e_id]>=batch.t[0].cpu()
         b_edge_index = edge_index[:,bmsk]
+
+        # breakpoint()
+
         b_eid = e_id[bmsk]
         b_t = dataset['data'].t[b_eid].to(device)
         b_raw_msg = dataset['data'].msg[b_eid].to(device)
@@ -171,6 +183,7 @@ def train_with_custom_neg_sampler(targs):
 
 
         total_loss += float(loss) * batch.num_events
+        print("step loss: ", float(loss) * batch.num_events)
         # break
 
     # breakpoint()

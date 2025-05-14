@@ -86,6 +86,30 @@ class DAATGNMemory(torch.nn.Module):
         """Detaches the memory from gradient computation."""
         self.memory.detach_()
 
+    def prep(self, ei_src, ei_dst, pos_node_s, pos_node_d):
+        batch_size = pos_node_s.size(0)
+        recent_indices = []
+        # breakpoint()
+        for i in range(ei_src.size(0)):
+            target_node = ei_src[i].item()
+            max_idx = ei_dst[i].item() % batch_size
+
+            found_idx = -1
+            for j in reversed(range(min(max_idx, pos_node_s.size(0)))):
+                if pos_node_s[j].item() == target_node:
+                    found_idx = j
+                    break
+                if pos_node_d[j].item() == target_node:
+                    found_idx = j+batch_size
+                    break
+            if found_idx == -1:
+                breakpoint()
+            recent_indices.append(found_idx)
+
+        return torch.tensor(recent_indices, device=ei_dst.device)
+
+        # return None
+
     def forward(self, n_id, b_edge_index, b_t, b_raw_msg, b_isrc) -> Tuple[Tensor, Tensor]:
         """Returns, for all nodes :obj:`n_id`, their current memory and their
         last updated timestamp."""
@@ -731,7 +755,7 @@ class DyRepMemory(torch.nn.Module):
 
 
 
-class APANEncoder(nn.Module):
+class APANEncoder(torch.nn.Module):
     def __init__(self, dim: int, num_heads: int = 4):
         super().__init__()
         self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, batch_first=True)
@@ -752,7 +776,7 @@ class APANEncoder(nn.Module):
         out = self.norm2(self.feedforward(out) + out)
         return out
 
-class APANMemory(nn.Module):
+class APANMemory(torch.nn.Module):
     def __init__(
         self,
         num_nodes: int,

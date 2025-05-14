@@ -347,7 +347,7 @@ class Recent_K_Sampler:
 
         return chunk_ids, previous_chunk_ids, global_to_local
 
-    def sample(self, root_node, root_ts, k=None):
+    def sample(self, root_node, root_ts, k=None, neg_cnt = 1):
         """Main sampling call: will use prefetched data if available"""
 
         if k is None:
@@ -384,14 +384,18 @@ class Recent_K_Sampler:
 
         eid_chunks_flattened = eid_chunks_selected.flatten()
         other_node_chunks_flattened = other_node_chunks_selected.flatten()
+        # print("collected_ts_indices: ", collected_ts_indices)
+        # print("eid_chunks_flattened: ", eid_chunks_flattened)
 
         sampled_eids = eid_chunks_flattened[collected_ts_indices]
+        sampled_eids[collected_ts_indices == -1] = -1
+
         sampled_other_nodes = other_node_chunks_flattened[collected_ts_indices]
 
         # Step 5: Rotate prefetch buffer for next batch
         self.current_prefetch_idx = (self.current_prefetch_idx + 1) % 2
 
-        return self.transform_eids(sampled_eids, sampled_other_nodes, root_node)
+        return self.transform_eids(sampled_eids, sampled_other_nodes, root_node, neg_cnt = neg_cnt)
     
 
     def transform_eids_old(self, sampled_eids, sampled_other_nodes, root_node):
@@ -412,13 +416,35 @@ class Recent_K_Sampler:
 
         return n_ids, valid_eids, edge_index
 
-    def transform_eids(self, sampled_eids, sampled_other_nodes, root_node):
+    def find_recent_occurrences(self, edge_index, pos_node_s, pos_node_d, batch_size, assoc):
+        recent_indices = []
+
+        for i in range(edge_index.size(1)):
+            target_node = edge_index[0, i].item()
+            max_idx = edge_index[1, i % batch_size].item()
+
+            found_idx = -1
+            for j in reversed(range(min(max_idx, pos_node_s.size(0)))):
+                if pos_node_s[j].item() == target_node:
+                    found_idx = j
+                    break
+                if pos_node_d[j].item() == target_node:
+                    found_idx = j+batch_size
+                    break
+            if found_idx == -1:
+                found_idx = assoc[target_node]
+            recent_indices.append(found_idx)
+
+        return torch.tensor(recent_indices, device=edge_index.device)
+
+    def transform_eids(self, sampled_eids, sampled_other_nodes, root_node, neg_cnt = 1):
         # breakpoint()
         batch_size, k = sampled_eids.shape
 
         # Step 1: Flatten and find valid entries
         eids_flat = sampled_eids.view(-1)
         other_nodes_flat = sampled_other_nodes.view(-1)
+        # print(eids_flat)
 
         valid_mask = (eids_flat != -1)
         valid_eids = eids_flat[valid_mask].cpu()
@@ -431,11 +457,25 @@ class Recent_K_Sampler:
         # Step 3: Map sampled other nodes
         mapped_other_nodes = self.assoc[other_nodes_flat]
 
+        # breakpoint()
+
+        bs = root_node.shape[0]//(2+neg_cnt) 
+        pos_node_s = root_node[:bs]
+        pos_node_d = root_node[bs:2*bs]
+
+
         # Step 4: Build edge indices
         edge_index_dst = torch.arange(root_node.shape[0], device=self.device).unsqueeze(1).expand(root_node.shape[0], k)
         edge_index_dst = edge_index_dst.reshape(-1)
-
+        # breakpoint()
         edge_index = torch.stack([mapped_other_nodes[valid_mask], edge_index_dst[valid_mask]], dim=0)
+
+        # edge_index = torch.stack([other_nodes_flat[valid_mask], edge_index_dst[valid_mask]], dim=0)
+        # recent = self.find_recent_occurrences(edge_index, pos_node_s, pos_node_d, bs, self.assoc)
+        # edge_index = torch.stack([recent, edge_index_dst[valid_mask]], dim=0)
+        
+        # print(recent)
+        # breakpoint()
 
         # Step 5: Concatenate n_ids (root_node + all sampled other nodes ONCE)
 
@@ -446,7 +486,7 @@ class Recent_K_Sampler:
         #     print("OK")
         # else:
         #     breakpoint()
-
+        # breakpoint()
         return n_ids, valid_eids, edge_index
 
 
