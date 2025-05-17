@@ -12,6 +12,7 @@ from modules.time_enc import TimeEncoder
 
 # import pdb
 # import time
+import mem_update_graph
 
 TGNMessageStoreType = Dict[int, Tuple[Tensor, Tensor, Tensor, Tensor]]
 
@@ -28,6 +29,7 @@ class DAATGNMemory(torch.nn.Module):
         message_module: Callable,
         aggregator_module: Callable,
         memory_updater_cell: str = "gru",
+        layer: int = 3,
     ):
         super().__init__()
 
@@ -35,6 +37,7 @@ class DAATGNMemory(torch.nn.Module):
         self.raw_msg_dim = raw_msg_dim
         self.memory_dim = memory_dim
         self.time_dim = time_dim
+        self.layer = layer
 
         self.msg_s_module = message_module
         self.msg_d_module = copy.deepcopy(message_module)
@@ -85,6 +88,16 @@ class DAATGNMemory(torch.nn.Module):
     def detach(self):
         """Detaches the memory from gradient computation."""
         self.memory.detach_()
+        
+    def mem_graph(self, ei_src, ei_dst, pos_node_s, pos_node_d):
+        batch_size = pos_node_s.size(0)
+        return mem_update_graph.mem_graph(
+            ei_src.to(torch.int64).contiguous(),
+            ei_dst.to(torch.int64).contiguous(),
+            pos_node_s.to(torch.int64).contiguous(),
+            pos_node_d.to(torch.int64).contiguous(),
+            batch_size
+        )
 
     def prep(self, ei_src, ei_dst, pos_node_s, pos_node_d):
         batch_size = pos_node_s.size(0)
@@ -115,7 +128,12 @@ class DAATGNMemory(torch.nn.Module):
         last updated timestamp."""
         if self.training:
             memory, last_update = self._get_updated_memory(n_id)
-            return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+            # return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+        
+            memory = memory[self._assoc[n_id]]
+            for _ in range(self.layer-1):
+                memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+            return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
         else:
             nn_id  = n_id.unique()
             self._assoc[nn_id] = torch.arange(nn_id.size(0), device=nn_id.device)
@@ -152,6 +170,7 @@ class DAATGNMemory(torch.nn.Module):
 
     def _intra_batch_compute_msg(self, all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, bm, msg_module):
         msrc_s = b_edge_index[1][b_isrc]
+        # breakpoint()
         src_s = all_n_id[msrc_s]
         dst_s = all_n_id[b_edge_index[0][b_isrc]]
         raw_msg_s = b_raw_msg[b_isrc]
@@ -161,7 +180,55 @@ class DAATGNMemory(torch.nn.Module):
         msg_s = msg_module(bm[self._assoc[src_s]], bm[self._assoc[dst_s]], raw_msg_s, t_enc_s)
 
         return msg_s, t_s, src_s, dst_s, msrc_s
+    
+    def _intra_batch_compute_msg_v2(self, all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, bm, msg_module):
+        msrc_s = b_edge_index[1][b_isrc]
+        msrc_d = b_edge_index[0][b_isrc]
+        src_s = all_n_id[msrc_s]
+        dst_s = all_n_id[b_edge_index[0][b_isrc]]
+        raw_msg_s = b_raw_msg[b_isrc]
+        t_s = b_t[b_isrc]
+        t_rel_s = t_s - last_update[self._assoc[src_s]]
+        t_enc_s = self.time_enc(t_rel_s.to(raw_msg_s.dtype))
+        msg_s = msg_module(bm[msrc_s], bm[msrc_d], raw_msg_s, t_enc_s)
 
+        return msg_s, t_s, src_s, dst_s, msrc_s
+
+
+
+    def _apply_intra_batch_info_v2(self, all_n_id, old_mem, last_update, b_edge_index, b_t, b_raw_msg, b_isrc):
+        # breakpoint()
+        # print(self._assoc[all_n_id])
+        # print(all_n_id.max())
+        # print(self._assoc[all_n_id].max())
+        # print(bm.shape)
+
+        # old_mem = bm[self._assoc[all_n_id]]
+
+        # breakpoint()
+
+        msg_s, t_s, src_s, dst_s, msrc_s  = self._intra_batch_compute_msg_v2(all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, old_mem, self.msg_s_module)
+        msg_d, t_d, src_d, dst_d, msrc_d  = self._intra_batch_compute_msg_v2(all_n_id, b_edge_index, ~b_isrc, b_raw_msg, b_t, last_update, old_mem, self.msg_d_module)
+
+        # Aggregate messages.
+        idx = torch.cat([msrc_s, msrc_d], dim=0).long()
+        msg = torch.cat([msg_s, msg_d], dim=0)
+        t = torch.cat([t_s, t_d], dim=0)
+        # breakpoint()
+        aggr = self.aggr_module(msg, idx, t, all_n_id.size(0))
+        # breakpoint()
+
+        # Get local copy of updated memory.
+        memory = self.memory_updater(aggr, old_mem)
+        dim_size = memory.size(0)
+        last_update = scatter(t, idx, 0, dim_size, reduce="max")
+        # breakpoint()
+
+        # # Get local copy of updated `last_update`.
+        # dim_size = self.last_update.size(0)
+        # last_update = scatter(t, idx, 0, dim_size, reduce="max")[n_id]
+        # breakpoint()
+        return memory, last_update
 
 
     def _apply_intra_batch_info(self, all_n_id, bm, last_update, b_edge_index, b_t, b_raw_msg, b_isrc):

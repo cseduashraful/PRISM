@@ -46,15 +46,49 @@ def train(targs):
 
         bmsk = e_id>max_seen_eid  #dataset['data'].t[e_id]>=batch.t[0].cpu()
         b_edge_index = edge_index[:,bmsk]
+
+        
+        ei_src = model['memory'].mem_graph(n_id[b_edge_index[0,:]],b_edge_index[1,:] , src, pos_dst)
+        b_edge_index = torch.stack([ei_src, b_edge_index[1, :]], dim=0)
+        # breakpoint()
+        # print(ei_src2)
+
         # ei_src = model['memory'].prep(n_id[b_edge_index[0,:]],b_edge_index[1,:] , src, pos_dst)
-        # b_edge_index_new = torch.stack([ei_src, b_edge_index[1, :]], dim=0)
+        # print(ei_src)
+
+        # if not torch.equal(ei_src2, ei_src):
+        #     breakpoint()
+
+        
         # print(b_edge_index_new)
+        
         # breakpoint()
 
         b_eid = e_id[bmsk]
         b_t = dataset['data'].t[b_eid].to(device)
         b_raw_msg = dataset['data'].msg[b_eid].to(device)
         b_isrc = n_id[b_edge_index[1]].cpu() == dataset['data'].src[b_eid]
+
+
+        # used = ei_src.unique()
+        # all = b_edge_index[1, :].unique()
+        # not_used = all[~torch.isin(all, used)]
+        # is_src = not_used<batch.num_events
+
+        # s_store_indx = not_used[is_src]
+        # s_store_src = src[s_store_indx]
+        # s_store_dst = pos_dst[s_store_indx]
+        # s_store_t = t[s_store_indx]
+        # s_store_msg = msg[s_store_indx]
+
+        # d_store_indx = not_used[~is_src]
+        # d_store_src = pos_dst[d_store_indx]
+        # d_store_dst = src[d_store_indx]
+        # d_store_t = t[d_store_indx]
+        # d_store_msg = msg[d_store_indx]
+
+
+
 
 
         z, last_update = model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)

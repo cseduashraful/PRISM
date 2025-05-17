@@ -18,9 +18,16 @@ setup(
         CUDAExtension(
             'sampler',  # Python module name
             ['sampler.cu'],
-        )
+        ),
+        CUDAExtension(
+            'mem_update_graph',
+            ['mem_update_graph.cu']
+        ),
     ],
     cmdclass={
         'build_ext': BuildExtension
     }
 )
+
+
+
