@@ -173,7 +173,7 @@ def main():
         for epoch in range(1, NUM_EPOCH + 1):
             # training
             start_epoch_train = timeit.default_timer()
-            loss = actrain(targs)
+            loss, max_seen_eid = actrain(targs)
             tim = timeit.default_timer() - start_epoch_train
             print(
                 f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
@@ -184,7 +184,7 @@ def main():
             t_tims += tim
             if t_tims > MAX_TR_TIME:
                 break
-            # perf_metric_val = test(targs, split_mode="val")
+            # perf_metric_val = test(targs, max_seen_eid, split_mode="val")
             # print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
             # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
             # val_perf_list.append(perf_metric_val)

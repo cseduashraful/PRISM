@@ -13,6 +13,7 @@ from modules.time_enc import TimeEncoder
 # import pdb
 # import time
 import mem_update_graph
+from torch_scatter import scatter_max
 
 TGNMessageStoreType = Dict[int, Tuple[Tensor, Tensor, Tensor, Tensor]]
 
@@ -137,10 +138,58 @@ class DAATGNMemory(torch.nn.Module):
         else:
             nn_id  = n_id.unique()
             self._assoc[nn_id] = torch.arange(nn_id.size(0), device=nn_id.device)
+
             memory, last_update = self.memory[nn_id], self.last_update[nn_id]
-            return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+
+            memory = memory[self._assoc[n_id]]
+            for _ in range(self.layer-1):
+                memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+            return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+
+            # return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
 
         # return memory, last_update
+
+    def update_state_v2(self, b_edge_index, ei_src, bs, src, pos_dst, t, msg, n_id, last_update, z ):
+        used = ei_src.unique()
+        all = b_edge_index[1, :].unique()
+        not_used = all[~torch.isin(all, used)]
+        is_src = not_used<bs
+        not_used = not_used % bs
+
+        s_store_indx = not_used[is_src]
+        s_store_src = src[s_store_indx]
+        s_store_dst = pos_dst[s_store_indx]
+        s_store_t = t[s_store_indx]
+        s_store_msg = msg[s_store_indx]
+
+        d_store_indx = not_used[~is_src]
+        d_store_src = pos_dst[d_store_indx]
+        d_store_dst = src[d_store_indx]
+        d_store_t = t[d_store_indx]
+        d_store_msg = msg[d_store_indx]
+
+        unique_nid, inverse = torch.unique(n_id, return_inverse=True)
+        max_val, argmax_idx = scatter_max(last_update, inverse, dim=0)
+        valid_mask = max_val > 0
+        final_indices = argmax_idx[valid_mask]
+        m_last_update = last_update[final_indices]
+        m_nid = n_id[final_indices]
+        m_memory = z[final_indices]
+
+        self.memory[m_nid] = m_memory
+        self.last_update[m_nid] = m_last_update
+
+        
+        self._update_msg_store(s_store_src, s_store_dst, s_store_t, s_store_msg, self.msg_s_store)
+        self._update_msg_store(d_store_src, d_store_dst, d_store_t, d_store_msg, self.msg_d_store)
+
+        if not self.training:
+            self._update_memory(n_id)
+
+
+
+
 
     def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor):
         """Updates the memory with newly encountered interactions
