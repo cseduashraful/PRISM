@@ -16,3 +16,10 @@ To build the prepocessor and sampler
 We built the Sampler on cuda 11.8
 
 # Address Intra-batch Temporal Discontinuity using Aggregation
+
+Multi-version memory management
+
+Features:
+- CUDA accelerated memory-update graph generation
+- approximate dependency-aware multi-version intra-batch memory
+- k-layer memory update module to push approximation k-hop away
