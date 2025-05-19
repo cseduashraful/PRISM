@@ -1,6 +1,6 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
-from modules.train_utils import train as actrain, test, train_with_custom_neg_sampler
+from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler
 from modules.memory_module import DAATGNMemory
 
 from modules.neg_sampler import NegLinkSamplerDest
@@ -31,7 +31,7 @@ def main():
     DATA = args.data
     print("INFO: Arguments:", args)
 
-    LR = args.lr#max(args.lr, (args.lr*args.bs)/200)
+    LR =args.lr# max(args.lr, (args.lr*args.bs)/200)
     BATCH_SIZE = args.bs
     K_VALUE = args.k_value  
     NUM_EPOCH = 1000#args.num_epoch
@@ -184,8 +184,8 @@ def main():
             t_tims += tim
             if t_tims > MAX_TR_TIME:
                 break
-            # perf_metric_val = test(targs, max_seen_eid, split_mode="val")
-            # print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
+            perf_metric_val = test(targs, max_seen_eid, split_mode="val")
+            print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
             # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
             # val_perf_list.append(perf_metric_val)
             # # check for early stopping

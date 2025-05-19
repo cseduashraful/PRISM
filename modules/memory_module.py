@@ -127,24 +127,32 @@ class DAATGNMemory(torch.nn.Module):
     def forward(self, n_id, b_edge_index, b_t, b_raw_msg, b_isrc) -> Tuple[Tensor, Tensor]:
         """Returns, for all nodes :obj:`n_id`, their current memory and their
         last updated timestamp."""
-        if self.training:
-            memory, last_update = self._get_updated_memory(n_id)
+        memory, last_update = self._get_updated_memory(n_id)
             # return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
         
-            memory = memory[self._assoc[n_id]]
-            for _ in range(self.layer-1):
-                memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
-            return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
-        else:
-            nn_id  = n_id.unique()
-            self._assoc[nn_id] = torch.arange(nn_id.size(0), device=nn_id.device)
+        memory = memory[self._assoc[n_id]]
+        for _ in range(self.layer-1):
+            memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+        return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
 
-            memory, last_update = self.memory[nn_id], self.last_update[nn_id]
+        # if self.training:
+        #     memory, last_update = self._get_updated_memory(n_id)
+        #     # return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+        
+        #     memory = memory[self._assoc[n_id]]
+        #     for _ in range(self.layer-1):
+        #         memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+        #     return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+        # else:
+        #     nn_id  = n_id.unique()
+        #     self._assoc[nn_id] = torch.arange(nn_id.size(0), device=nn_id.device)
 
-            memory = memory[self._assoc[n_id]]
-            for _ in range(self.layer-1):
-                memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
-            return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+        #     memory, last_update = self.memory[nn_id], self.last_update[nn_id]
+
+        #     memory = memory[self._assoc[n_id]]
+        #     for _ in range(self.layer-1):
+        #         memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+        #     return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
 
             # return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
 
@@ -184,8 +192,8 @@ class DAATGNMemory(torch.nn.Module):
         self._update_msg_store(s_store_src, s_store_dst, s_store_t, s_store_msg, self.msg_s_store)
         self._update_msg_store(d_store_src, d_store_dst, d_store_t, d_store_msg, self.msg_d_store)
 
-        if not self.training:
-            self._update_memory(n_id)
+        # if not self.training:
+        #     self._update_memory(n_id)
 
 
 
