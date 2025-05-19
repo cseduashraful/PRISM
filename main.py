@@ -18,8 +18,10 @@ import torch
 
 import timeit
 import os
+import sys
 import os.path as osp
 from pathlib import Path
+import argparse
 
 import preprocessor #openmp
 
@@ -27,24 +29,38 @@ import preprocessor #openmp
     
 
 def main():
+    custom_parser = argparse.ArgumentParser(add_help=False)
+    custom_parser.add_argument('--mxtt', type=int, default=12)
+    custom_args, remaining_argv = custom_parser.parse_known_args()
+
+    # Step 2: Replace sys.argv with only recognized args for get_args
+    sys.argv = [sys.argv[0]] + remaining_argv
     args, _ = get_args()
-    DATA = args.data
+    args.mxtt = custom_args.mxtt
+
+
+    # args.num_epoch =  1000
+    args.num_run = 1
+    args.patience = args.num_epoch
+
+
     print("INFO: Arguments:", args)
 
+    DATA = args.data
     LR =args.lr# max(args.lr, (args.lr*args.bs)/200)
     BATCH_SIZE = args.bs
     K_VALUE = args.k_value  
-    NUM_EPOCH = 1000#args.num_epoch
+    NUM_EPOCH = args.num_epoch
     SEED = args.seed
     MEM_DIM = args.mem_dim
     TIME_DIM = args.time_dim
     EMB_DIM = args.emb_dim
     TOLERANCE = args.tolerance
     PATIENCE = args.patience
-    NUM_RUNS = 1#args.num_run
+    NUM_RUNS = args.num_run
     NUM_NEIGHBORS = K_VALUE
     MODEL_NAME = 'SDA-TGN'
-    MAX_TR_TIME = 12*60*60
+    MAX_TR_TIME = args.mxtt*60*60#12*60*60
     # ==========
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -74,27 +90,6 @@ def main():
         max_chunk_per_node
     )
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
-
-
-    # output = tci_data
-    # chunk_map = torch.tensor(output['chunk_map'], dtype=torch.long)
-    # # Count valid chunks per node (non -1 values)
-    # valid_chunk_counts = (chunk_map != -1).sum(dim=1)
-
-    # # Get min/max values and corresponding node indices
-    # min_chunks = valid_chunk_counts.min().item()
-    # max_chunks = valid_chunk_counts.max().item()
-
-    # min_nodes = (valid_chunk_counts == min_chunks).nonzero(as_tuple=True)[0].tolist()
-    # max_nodes = (valid_chunk_counts == max_chunks).nonzero(as_tuple=True)[0].tolist()
-
-    # print(f"[Info] Valid chunk counts per node:\n{valid_chunk_counts.tolist()}")
-    # print(f"[Info] Minimum valid chunks: {min_chunks}, Nodes: {min_nodes}")
-    # print(f"[Info] Maximum valid chunks: {max_chunks}, Nodes: {max_nodes}")
-
-    # breakpoint()
-
-
 
     # breakpoint()
     sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes)
@@ -170,10 +165,11 @@ def main():
         losses = []
         tims = []
         t_tims = 0
+        mrrs = []
         for epoch in range(1, NUM_EPOCH + 1):
             # training
             start_epoch_train = timeit.default_timer()
-            loss, max_seen_eid = actrain(targs)
+            loss, max_seen_eid = actrain(targs, -1)
             tim = timeit.default_timer() - start_epoch_train
             print(
                 f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
@@ -182,29 +178,31 @@ def main():
             tims.append(tim)
             losses.append(loss)
             t_tims += tim
-            if t_tims > MAX_TR_TIME:
-                break
-            perf_metric_val = test(targs, max_seen_eid, split_mode="val")
+            
+            perf_metric_val, max_seen_id = test(targs, max_seen_eid, split_mode="val")
             print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
             # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
-            # val_perf_list.append(perf_metric_val)
-            # # check for early stopping
-            # if early_stopper.step_check(perf_metric_val, model):
-            #     break
+            val_perf_list.append(perf_metric_val)
+            # check for early stopping
+            if early_stopper.step_check(perf_metric_val, model):
+                break
+            if t_tims > MAX_TR_TIME:
+                break
             
         train_val_time = timeit.default_timer() - start_train_val
         print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
+        print("'mrr' : ", val_perf_list, ",")
         print("'loss' : ",losses,",")
         print("'time' : ",tims, ",")
         # ==================================================== Test
         # first, load the best model
-        # early_stopper.load_checkpoint(model)
-        #  # final testing
-        # start_test = timeit.default_timer()
-        # perf_metric_test = test(split_mode="test")
+        early_stopper.load_checkpoint(model)
+         # final testing
+        start_test = timeit.default_timer()
+        perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
 
-        # print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-        # print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+        print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+        print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
         # test_time = timeit.default_timer() - start_test
         # print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
 

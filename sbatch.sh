@@ -33,3 +33,4 @@ conda activate pyg
 # python tgn.py --data lastfm --bs 32768
 #33454161 256 33454163 512 33454588 1024 33454591 2048 33454935 4096 33455387 8192 33455792 16384 33456099 32768
 
+python main.py --data tgbl-wiki --bs 8192 --num_epoch 1 --mxtt 24
