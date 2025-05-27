@@ -124,16 +124,17 @@ class DAATGNMemory(torch.nn.Module):
 
         # return None
 
-    def forward(self, n_id, b_edge_index, b_t, b_raw_msg, b_isrc) -> Tuple[Tensor, Tensor]:
+    def forward(self, n_id, b_edge_index, b_t, b_raw_msg, b_isrc, delivery_addr = None) -> Tuple[Tensor, Tensor]:
         """Returns, for all nodes :obj:`n_id`, their current memory and their
         last updated timestamp."""
         memory, last_update = self._get_updated_memory(n_id)
             # return self._apply_intra_batch_info(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
-        
+        # breakpoint()
         memory = memory[self._assoc[n_id]]
+        init_mem = None # memory
         for _ in range(self.layer-1):
-            memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
-        return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc)
+            memory, last_update_n =  self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc, init_mem = init_mem, delivery_addr = delivery_addr)
+        return self._apply_intra_batch_info_v2(n_id, memory, last_update, b_edge_index, b_t, b_raw_msg, b_isrc, init_mem = init_mem, delivery_addr = delivery_addr)
 
         # if self.training:
         #     memory, last_update = self._get_updated_memory(n_id)
@@ -253,21 +254,15 @@ class DAATGNMemory(torch.nn.Module):
 
 
 
-    def _apply_intra_batch_info_v2(self, all_n_id, old_mem, last_update, b_edge_index, b_t, b_raw_msg, b_isrc):
-        # breakpoint()
-        # print(self._assoc[all_n_id])
-        # print(all_n_id.max())
-        # print(self._assoc[all_n_id].max())
-        # print(bm.shape)
-
-        # old_mem = bm[self._assoc[all_n_id]]
-
-        # breakpoint()
-
+    def _apply_intra_batch_info_v2(self, all_n_id, old_mem, last_update, b_edge_index, b_t, b_raw_msg, b_isrc, init_mem = None, delivery_addr = None):
         msg_s, t_s, src_s, dst_s, msrc_s  = self._intra_batch_compute_msg_v2(all_n_id, b_edge_index, b_isrc, b_raw_msg, b_t, last_update, old_mem, self.msg_s_module)
         msg_d, t_d, src_d, dst_d, msrc_d  = self._intra_batch_compute_msg_v2(all_n_id, b_edge_index, ~b_isrc, b_raw_msg, b_t, last_update, old_mem, self.msg_d_module)
 
         # Aggregate messages.
+        if delivery_addr is not None:
+            msrc_s = delivery_addr[b_isrc]
+            msrc_d = delivery_addr[~b_isrc]
+        
         idx = torch.cat([msrc_s, msrc_d], dim=0).long()
         msg = torch.cat([msg_s, msg_d], dim=0)
         t = torch.cat([t_s, t_d], dim=0)
@@ -276,14 +271,12 @@ class DAATGNMemory(torch.nn.Module):
         # breakpoint()
 
         # Get local copy of updated memory.
-        memory = self.memory_updater(aggr, old_mem)
+        if init_mem is None:
+            memory = self.memory_updater(aggr, old_mem)
+        else:
+            memory = self.memory_updater(aggr, init_mem)
         dim_size = memory.size(0)
         last_update = scatter(t, idx, 0, dim_size, reduce="max")
-        # breakpoint()
-
-        # # Get local copy of updated `last_update`.
-        # dim_size = self.last_update.size(0)
-        # last_update = scatter(t, idx, 0, dim_size, reduce="max")[n_id]
         # breakpoint()
         return memory, last_update
 

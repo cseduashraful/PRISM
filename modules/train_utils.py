@@ -2,6 +2,35 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
+def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device):
+    bmsk = e_id>max_seen_eid
+    bdst = torch.arange(bs*2)
+    bsrc = torch.cat([torch.arange(bs, bs*2), torch.arange(bs)])
+    bedge = torch.stack([bsrc, bdst]).to(device)
+
+    bedge_all = model['memory'].mem_graph(n_id[torch.cat([bedge[0,:], bedge[1,:]])],torch.cat([bedge[1,:], bedge[1,:]]) , src, pos_dst)
+    fall_back = neighbor_loader.assoc[n_id[torch.cat([bedge[0,:], bedge[1,:]])]]
+
+    updated_ball = torch.where(bedge_all != -1, bedge_all, fall_back)
+    mem_graph_triplet = torch.stack([updated_ball[:bedge.shape[1]], updated_ball[bedge.shape[1]:], bedge[1]])
+
+    b_edge_index = edge_index[:,bmsk]
+    new_eids = torch.arange(max_seen_eid+1, max_seen_eid+1+bs)
+
+    mem_eid = torch.cat([new_eids, new_eids, e_id[bmsk]])
+    del_addr = torch.cat([mem_graph_triplet[2, :], b_edge_index[1]])
+    relative_mem_id = mem_eid - (max_seen_eid + 1)
+    mem_graph_quad_tmp =  torch.vstack([mem_graph_triplet[:2,relative_mem_id], del_addr, mem_eid.to(device)])
+    direction = del_addr<bs
+    src_part = mem_graph_quad_tmp[:, direction]
+    dst_part = mem_graph_quad_tmp[:, ~direction]
+    dst_part[[0, 1]] = dst_part[[1, 0]]
+    mem_graph_quad = torch.cat([src_part, dst_part], dim=1)
+
+    return mem_graph_quad
+
+
+
 
 def train(targs, max_seen_id):
     model = targs['model']
@@ -44,22 +73,118 @@ def train(targs, max_seen_id):
 
         # bmsk = dataset['data'].t[e_id]>=batch.t[0].cpu()
 
-        bmsk = e_id>max_seen_eid  #dataset['data'].t[e_id]>=batch.t[0].cpu()
+        # bmsk = e_id>max_seen_eid  #dataset['data'].t[e_id]>=batch.t[0].cpu()
         # b_edge_index = edge_index[:,bmsk]
+
+
+
+
+        # bdst = torch.arange(src.shape[0]*2)
+        # bsrc = torch.cat([torch.arange(src.shape[0], src.shape[0]*2), torch.arange(src.shape[0])])
+        # bedge = torch.stack([bsrc, bdst]).to(device)
+
+
+        # bedge_all = model['memory'].mem_graph(n_id[torch.cat([bedge[0,:], bedge[1,:]])],torch.cat([bedge[1,:], bedge[1,:]]) , src, pos_dst)
+        # fall_back = neighbor_loader.assoc[n_id[torch.cat([bedge[0,:], bedge[1,:]])]]
+
+        # updated_ball = torch.where(bedge_all != -1, bedge_all, fall_back)
+        # mem_graph_triplet = torch.stack([updated_ball[:bedge.shape[1]], updated_ball[bedge.shape[1]:], bedge[1]])
+
+        # b_edge_index = edge_index[:,bmsk]
+        # new_eids = torch.arange(max_seen_eid+1, max_seen_eid+1+src.shape[0])
+
+        # mem_eid = torch.cat([new_eids, new_eids, e_id[bmsk]])
+        # del_addr = torch.cat([mem_graph_triplet[2, :], b_edge_index[1]])
+        # relative_mem_id = mem_eid - (max_seen_eid + 1)
+        # mem_graph_quad_tmp =  torch.vstack([mem_graph_triplet[:2,relative_mem_id], del_addr, mem_eid.to(device)])
+        # direction = del_addr<bs
+        # src_part = mem_graph_quad_tmp[:, direction]
+        # dst_part = mem_graph_quad_tmp[:, ~direction]
+        # dst_part[[0, 1]] = dst_part[[1, 0]]
+        # mem_graph_quad = torch.cat([src_part, dst_part], dim=1)
+
+        mem_graph_quad  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
+
+
+        b_eid = mem_graph_quad[3]#e_id[bmsk]
+        b_eid_cpu = b_eid.cpu()
+        b_t = dataset['data'].t[b_eid_cpu].to(device)
+        b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+        b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+
+        z, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+
+
+        remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , src, pos_dst)
+        remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
+        remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
+        z = torch.cat([z[remap], z[3*bs:]])
+        last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+
+
+        #for re-mapping
+
+        # breakpoint()
+
+
+
+
+
+
+        
+        
+
 
         # breakpoint()
         ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , src, pos_dst)
+
         updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
         edge_index = torch.stack([updated_src, edge_index[1,:]])
-        b_edge_index = edge_index[:,bmsk]
 
 
-        b_eid = e_id[bmsk]
-        b_t = dataset['data'].t[b_eid].to(device)
-        b_raw_msg = dataset['data'].msg[b_eid].to(device)
-        b_isrc = n_id[b_edge_index[1]].cpu() == dataset['data'].src[b_eid]
 
-        z, last_update = model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
+
+        # ei_dst_all = model['memory'].mem_graph(n_id[edge_index[1,:]],edge_index[1,:] , src, pos_dst)
+        # fall_back = neighbor_loader.assoc[n_id[edge_index[1,:]]]
+        # updated_dst = torch.where(ei_dst_all != -1, ei_dst_all, fall_back)
+
+
+        # b_edge_index = edge_index[:,bmsk]
+
+
+        # #neighbor_loader.assoc[n_id[bedge][0]]
+        # # breakpoint()
+        # bedge =  torch.cat([bedge, b_edge_index], dim=1)
+        # fall_back_src = neighbor_loader.assoc[n_id[bedge][0]]
+
+        # bedge_src_all = model['memory'].mem_graph(n_id[bedge[0,:]],bedge[1,:] , src, pos_dst)
+        # bedge_dst_all = model['memory'].mem_graph(n_id[bedge[1,:]],bedge[1,:] , src, pos_dst)
+
+        # bedge_all = model['memory'].mem_graph(n_id[torch.cat([bedge[0,:], bedge[1,:]])],torch.cat([bedge[1,:], bedge[1,:]]) , src, pos_dst)
+        # fall_back = neighbor_loader.assoc[n_id[torch.cat([bedge[0,:], bedge[1,:]])]]
+        # updated_ball = torch.where(bedge_all != -1, bedge_all, fall_back)
+        # mem_graph_triplet = torch.stack([updated_ball[:bedge.shape[1]], updated_ball[bedge.shape[1]:], bedge[1]])
+
+        # new_eids = torch.arange(max_seen_eid+1, max_seen_eid+1+src.shape[0])
+        # mem_eid = torch.cat([new_eids, new_eids, e_id[bmsk]])
+        # # triplet = normalize_mem_graph(mem_graph_triplet, mem_eid, bs)
+        
+        # # breakpoint()
+
+
+        # updated_bsrc = torch.where(bedge_src_all != -1, bedge_src_all, fall_back_src)
+        # new_bedge = torch.stack([updated_bsrc, bedge[1, :]])
+        # new_b_edge_index = torch.cat([b_edge_index, new_bedge], dim=1)
+
+        # # breakpoint()
+
+
+        # b_eid = e_id[bmsk]
+        # b_t = dataset['data'].t[b_eid].to(device)
+        # b_raw_msg = dataset['data'].msg[b_eid].to(device)
+        # b_isrc = n_id[b_edge_index[1]].cpu() == dataset['data'].src[b_eid]
+
+        # z, last_update = model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
 
         z = model['gnn'](
             z,
@@ -81,9 +206,10 @@ def train(targs, max_seen_id):
         loss.backward()
         optimizer.step()
         # model['memory'].update_state(src, pos_dst, t, msg)
-        z_m, last_update = model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
+        z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+#model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
         model['memory'].update_state_v2(
-            b_edge_index, b_edge_index[0:,], bs, 
+            mem_graph_quad[0:2,:], mem_graph_quad[0,:], bs, 
             src, pos_dst, t, msg, 
             n_id, last_update, z_m)
         model['memory'].detach()
@@ -155,17 +281,46 @@ def test_new(targs, max_seen_id, split_mode):
             root_nodes = torch.cat([pos_src, pos_dst, neg_dst], dim = 0).to(device)
             # breakpoint()
             n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
-            bmsk = e_id>max_seen_eid
-            
+
+
+
+            # bmsk = e_id>max_seen_eid
+
+            mem_graph_quad = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, pos_src, pos_dst, device)
+            b_eid = mem_graph_quad[3]#e_id[bmsk]
+            b_eid_cpu = b_eid.cpu()
+            b_t = dataset['data'].t[b_eid_cpu].to(device)
+            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+            b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+
+            z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+
+
+            remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , pos_src, pos_dst)
+            remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
+            remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
+
+            z_m = torch.cat([z_m[remap], z_m[3*bs:]])
+            last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+
             ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , pos_src, pos_dst)
             updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
             edge_index = torch.stack([updated_src, edge_index[1,:]])
-            b_edge_index = edge_index[:,bmsk]
-            b_eid = e_id[bmsk]
-            b_t = dataset['data'].t[b_eid].to(device)
-            b_raw_msg = dataset['data'].msg[b_eid].to(device)
-            b_isrc = n_id[b_edge_index[1]].cpu() == dataset['data'].src[b_eid]
-            z_m, last_update = model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
+
+
+            
+            # ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , pos_src, pos_dst)
+            # updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
+            # edge_index = torch.stack([updated_src, edge_index[1,:]])
+            # b_edge_index = edge_index[:,bmsk]
+            # b_eid = e_id[bmsk]
+            # b_t = dataset['data'].t[b_eid].to(device)
+            # b_raw_msg = dataset['data'].msg[b_eid].to(device)
+            # b_isrc = n_id[b_edge_index[1]].cpu() == dataset['data'].src[b_eid]
+            # z_m, last_update = model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
+
+
+            
 
             z = model['gnn'](
                 z_m,
@@ -182,6 +337,7 @@ def test_new(targs, max_seen_id, split_mode):
             preds.append(neg_out)
 
         all_y_preds = torch.cat(preds, dim=1)
+        # breakpoint()
         for i in range(all_y_preds.size(0)):
             y_pred = all_y_preds[i]  # shape [1000]
             
@@ -192,12 +348,16 @@ def test_new(targs, max_seen_id, split_mode):
             }
             perf_list.append(evaluator.eval(input_dict)[metric])
         
+        # model['memory'].update_state_v2(
+        #     b_edge_index, b_edge_index[0:,], bs, 
+        #     pos_src.to(device), pos_dst.to(device), pos_t.to(device), pos_msg.to(device), 
+        #     n_id, last_update, z_m)
         model['memory'].update_state_v2(
-            b_edge_index, b_edge_index[0:,], bs, 
+            mem_graph_quad[0:2,:], mem_graph_quad[0,:], bs, 
             pos_src.to(device), pos_dst.to(device), pos_t.to(device), pos_msg.to(device), 
             n_id, last_update, z_m)        
 
-    max_seen_eid += bs
+        max_seen_eid += bs
     perf_metrics = float(torch.tensor(perf_list).mean())
 
     return perf_metrics, max_seen_eid
@@ -289,3 +449,36 @@ def train_with_custom_neg_sampler(targs):
 
     # breakpoint()
     return total_loss/dataset['train_length']
+
+
+
+
+
+
+
+
+# def normalize_mem_graph(edge_index_triplet, e_id, bs):
+#     new_edge_index_triplet = edge_index_triplet.clone()
+#     unique_eids = torch.unique(e_id)
+
+#     for ueid in unique_eids:
+#         # Get all indices with this eid
+#         indices = (e_id == ueid).nonzero(as_tuple=True)[0]
+#         triplet_src_vals = edge_index_triplet[0, indices]
+
+#         # Choose representative index based on the rule
+#         high_val_indices = indices[triplet_src_vals >= 2 * bs]
+
+#         if len(high_val_indices) > 0:
+#             rep_idx = high_val_indices[0]
+#         else:
+#             min_val_idx = indices[triplet_src_vals.argmin()]
+#             rep_idx = min_val_idx
+
+#         # Get representative column
+#         rep_column = edge_index_triplet[:, rep_idx].view(3, 1)
+
+#         # Broadcast this column to all matching indices
+#         new_edge_index_triplet[:, indices] = rep_column.expand(3, indices.size(0))
+
+#     return new_edge_index_triplet

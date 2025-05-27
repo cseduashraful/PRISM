@@ -25,18 +25,20 @@ import argparse
 
 import preprocessor #openmp
 
-
+debug = True
     
 
 def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
     custom_parser.add_argument('--mxtt', type=int, default=12)
+    custom_parser.add_argument('--debug', type=bool, default=False)
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
     # Step 2: Replace sys.argv with only recognized args for get_args
     sys.argv = [sys.argv[0]] + remaining_argv
     args, _ = get_args()
     args.mxtt = custom_args.mxtt
+    args.debug = custom_args.debug
 
 
     # args.num_epoch =  1000
@@ -61,6 +63,7 @@ def main():
     NUM_NEIGHBORS = K_VALUE
     MODEL_NAME = 'SDA-TGN'
     MAX_TR_TIME = args.mxtt*60*60#12*60*60
+    debug = args.debug
     # ==========
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -178,16 +181,18 @@ def main():
             tims.append(tim)
             losses.append(loss)
             t_tims += tim
+
+            if not debug:
             
-            perf_metric_val, max_seen_id = test(targs, max_seen_eid, split_mode="val")
-            print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
-            # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
-            val_perf_list.append(perf_metric_val)
-            # check for early stopping
-            if early_stopper.step_check(perf_metric_val, model):
-                break
-            if t_tims > MAX_TR_TIME:
-                break
+                perf_metric_val, max_seen_id = test(targs, max_seen_eid, split_mode="val")
+                print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
+                # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
+                val_perf_list.append(perf_metric_val)
+                # check for early stopping
+                if early_stopper.step_check(perf_metric_val, model):
+                    break
+                if t_tims > MAX_TR_TIME:
+                    break
             
         train_val_time = timeit.default_timer() - start_train_val
         print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
