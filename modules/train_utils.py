@@ -115,6 +115,7 @@ def train(targs, max_seen_id):
         z, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
 
 
+
         remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , src, pos_dst)
         remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
         remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
@@ -122,10 +123,10 @@ def train(targs, max_seen_id):
         last_update = torch.cat([last_update[remap], last_update[3*bs:]])
 
 
-        #for re-mapping
-
+        
+        # from exclude.longdp import max_depth
+        # max_depth(mem_graph_quad)
         # breakpoint()
-
 
 
 
@@ -208,8 +209,11 @@ def train(targs, max_seen_id):
         # model['memory'].update_state(src, pos_dst, t, msg)
         z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
 #model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
+        z_m = torch.cat([z_m[remap], z_m[3*bs:]])
+        last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+
         model['memory'].update_state_v2(
-            mem_graph_quad[0:2,:], mem_graph_quad[0,:], bs, 
+            mem_graph_quad[2], remap, bs, 
             src, pos_dst, t, msg, 
             n_id, last_update, z_m)
         model['memory'].detach()
@@ -352,8 +356,11 @@ def test_new(targs, max_seen_id, split_mode):
         #     b_edge_index, b_edge_index[0:,], bs, 
         #     pos_src.to(device), pos_dst.to(device), pos_t.to(device), pos_msg.to(device), 
         #     n_id, last_update, z_m)
+        # z_m = torch.cat([z_m[remap], z_m[3*bs:]])
+        # last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+
         model['memory'].update_state_v2(
-            mem_graph_quad[0:2,:], mem_graph_quad[0,:], bs, 
+            mem_graph_quad[2], remap, bs, 
             pos_src.to(device), pos_dst.to(device), pos_t.to(device), pos_msg.to(device), 
             n_id, last_update, z_m)        
 
@@ -449,36 +456,3 @@ def train_with_custom_neg_sampler(targs):
 
     # breakpoint()
     return total_loss/dataset['train_length']
-
-
-
-
-
-
-
-
-# def normalize_mem_graph(edge_index_triplet, e_id, bs):
-#     new_edge_index_triplet = edge_index_triplet.clone()
-#     unique_eids = torch.unique(e_id)
-
-#     for ueid in unique_eids:
-#         # Get all indices with this eid
-#         indices = (e_id == ueid).nonzero(as_tuple=True)[0]
-#         triplet_src_vals = edge_index_triplet[0, indices]
-
-#         # Choose representative index based on the rule
-#         high_val_indices = indices[triplet_src_vals >= 2 * bs]
-
-#         if len(high_val_indices) > 0:
-#             rep_idx = high_val_indices[0]
-#         else:
-#             min_val_idx = indices[triplet_src_vals.argmin()]
-#             rep_idx = min_val_idx
-
-#         # Get representative column
-#         rep_column = edge_index_triplet[:, rep_idx].view(3, 1)
-
-#         # Broadcast this column to all matching indices
-#         new_edge_index_triplet[:, indices] = rep_column.expand(3, indices.size(0))
-
-#     return new_edge_index_triplet

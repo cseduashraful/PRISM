@@ -159,9 +159,9 @@ class DAATGNMemory(torch.nn.Module):
 
         # return memory, last_update
 
-    def update_state_v2(self, b_edge_index, ei_src, bs, src, pos_dst, t, msg, n_id, last_update, z ):
+    def update_state_v2(self, all_nodes, ei_src, bs, src, pos_dst, t, msg, n_id, last_update, z ):
         used = ei_src.unique()
-        all = b_edge_index[1, :].unique()
+        all = all_nodes.unique()
         not_used = all[~torch.isin(all, used)]
         is_src = not_used<bs
         not_used = not_used % bs
