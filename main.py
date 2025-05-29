@@ -32,6 +32,7 @@ def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
     custom_parser.add_argument('--mxtt', type=int, default=12)
     custom_parser.add_argument('--debug', type=bool, default=False)
+    custom_parser.add_argument('--custom_neg', type=bool, default=False)
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
     # Step 2: Replace sys.argv with only recognized args for get_args
@@ -39,12 +40,11 @@ def main():
     args, _ = get_args()
     args.mxtt = custom_args.mxtt
     args.debug = custom_args.debug
-
+    args.custom_neg = custom_args.custom_neg
 
     # args.num_epoch =  1000
     args.num_run = 1
     args.patience = args.num_epoch
-
 
     print("INFO: Arguments:", args)
 
@@ -72,7 +72,11 @@ def main():
     data = dataset['data']
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
-    neg_dest_sampler = NegLinkSamplerDest(unique_destination_nodes)
+
+    if args.custom_neg:
+        neg_dest_sampler = NegLinkSamplerDest(unique_destination_nodes)
+    else:
+        neg_dest_sampler = None
 
 
     chunk_size = 256
@@ -208,34 +212,6 @@ def main():
 
         print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
         print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
-        # test_time = timeit.default_timer() - start_test
-        # print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
-
-        # save_results({'model': MODEL_NAME,
-        #             'data': DATA,
-        #             'run': run_idx,
-        #             'seed': SEED,
-        #             f'val {dataset["metric"]}': val_perf_list,
-        #             f'test {dataset["metric"]}': perf_metric_test,
-        #             'test_time': test_time,
-        #             'tot_train_val_time': train_val_time
-        #             }, 
-        # results_filename)
-
-        # print(f"INFO: >>>>> Run: {run_idx}, elapsed time: {timeit.default_timer() - start_run: .4f} <<<<<")
-        # print('-------------------------------------------------------------------------------')
-
-
-
-
-
-
-
-
-    # breakpoint()
-
-
-    
 
 
 if __name__ == "__main__":

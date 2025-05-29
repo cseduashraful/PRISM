@@ -356,11 +356,24 @@ class DAATGNMemory(torch.nn.Module):
         raw_msg: Tensor,
         msg_store: TGNMessageStoreType,
     ):
+        
         n_id, perm = src.sort()
         n_id, count = n_id.unique_consecutive(return_counts=True)
+        # breakpoint()
         for i, idx in zip(n_id.tolist(), perm.split(count.tolist())):
             msg_store[i] = (src[idx], dst[idx], t[idx], raw_msg[idx])
-        # breakpoint()
+        # for node, s, d, ts, msg in zip(src.tolist(), src, dst, t, raw_msg):
+        #     msg_store[node] = (s, d, ts, msg)
+
+        # # breakpoint()
+        # # return {
+        # #     src[i].item(): (src[i], dst[i], t[i], raw_msg[i])
+        # #     for i in range(src.size(0))
+        # # }
+        # src_cpu = src.cpu()  # avoid repeated .item() GPU→CPU syncs
+        # for i in range(src.size(0)):
+        #     node_id = src_cpu[i].item()
+        #     msg_store[node_id] = (src[i], dst[i], t[i], raw_msg[i])
 
     def _compute_msg(
         self, n_id: Tensor, msg_store: TGNMessageStoreType, msg_module: Callable
