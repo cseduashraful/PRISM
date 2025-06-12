@@ -15,6 +15,9 @@ from modules.msg_func import IdentityMessage
 from modules.msg_agg import MeanAggregator as Agg
 from modules.neighbor_loader import LastNeighborLoader
 from modules.memory_module import APANMemory
+from modules.train_utils import get_latest_neighbors_per_node
+debug = False
+
 # from apan_train_test_pipeline import train_apan, test_apan
 def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion, device, assoc, min_dst_idx, max_dst_idx):
     model['memory'].train()
@@ -41,8 +44,9 @@ def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion,
 
         n_id = torch.cat([src, pos_dst, neg_dst]).unique()
         n_id, edge_index, e_id = neighbor_loader(n_id)
+        neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
         assoc[n_id] = torch.arange(n_id.size(0), device=device)
-
+        # breakpoint()
         z, last_update = model['memory'](n_id)
         z = model['gnn'](
             z,
@@ -58,7 +62,7 @@ def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion,
         loss = criterion(pos_out, torch.ones_like(pos_out))
         loss += criterion(neg_out, torch.zeros_like(neg_out))
 
-        model['memory'].update_state(src, pos_dst, t, msg)
+        model['memory'].update_state(src, pos_dst, t, msg, neighbors, n_id)
         neighbor_loader.insert(src, pos_dst)
 
         loss.backward()
@@ -68,14 +72,26 @@ def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion,
 
     return total_loss / data.num_events
 
+
+
 @torch.no_grad()
-def test_apan(model, data, loader, neg_sampler, split_mode, neighbor_loader, device, assoc, metric):
+def test(loader, neg_sampler, split_mode='val'):
+    r"""
+    Evaluated the dynamic link prediction
+    Evaluation happens as 'one vs. many', meaning that each positive edge is evaluated against many negative edges
+
+    Parameters:
+        loader: an object containing positive attributes of the positive edges of the evaluation set
+        neg_sampler: an object that gives the negative edges corresponding to each positive edge
+        split_mode: specifies whether it is the 'validation' or 'test' set to correctly load the negatives
+    Returns:
+        perf_metric: the result of the performance evaluation
+    """
     model['memory'].eval()
     model['gnn'].eval()
     model['link_pred'].eval()
 
     perf_list = []
-    evaluator = Evaluator(name=metric)
 
     for pos_batch in loader:
         pos_src, pos_dst, pos_t, pos_msg = (
@@ -101,6 +117,7 @@ def test_apan(model, data, loader, neg_sampler, split_mode, neighbor_loader, dev
             n_id, edge_index, e_id = neighbor_loader(n_id)
             assoc[n_id] = torch.arange(n_id.size(0), device=device)
 
+            # Get updated memory of all nodes involved in the computation.
             z, last_update = model['memory'](n_id)
             z = model['gnn'](
                 z,
@@ -111,6 +128,8 @@ def test_apan(model, data, loader, neg_sampler, split_mode, neighbor_loader, dev
             )
 
             y_pred = model['link_pred'](z[assoc[src]], z[assoc[dst]])
+
+            # compute MRR
             input_dict = {
                 "y_pred_pos": np.array([y_pred[0, :].squeeze(dim=-1).cpu()]),
                 "y_pred_neg": np.array(y_pred[1:, :].squeeze(dim=-1).cpu()),
@@ -118,10 +137,20 @@ def test_apan(model, data, loader, neg_sampler, split_mode, neighbor_loader, dev
             }
             perf_list.append(evaluator.eval(input_dict)[metric])
 
-        model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg)
+        # Update memory and neighbor loader with ground-truth state.
+        # model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg)
+        n_id = torch.cat([src, pos_dst]).unique()
+        n_id, edge_index, e_id = neighbor_loader(n_id)
+        neighbors = get_latest_neighbors_per_node(pos_src, pos_dst, pos_t, edge_index, n_id)
+        model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg, neighbors, n_id)
+
+
         neighbor_loader.insert(pos_src, pos_dst)
 
-    return float(torch.tensor(perf_list).mean())
+
+    perf_metrics = float(torch.tensor(perf_list).mean())
+
+    return perf_metrics
 
 
 
@@ -151,6 +180,8 @@ test_data = data[dataset.test_mask]
 metric = dataset.eval_metric
 neg_sampler = dataset.negative_sampler
 
+evaluator = Evaluator(name=DATA)
+
 # Loaders
 train_loader = TemporalDataLoader(train_data, batch_size=BATCH_SIZE)
 val_loader = TemporalDataLoader(val_data, batch_size=BATCH_SIZE)
@@ -164,10 +195,12 @@ memory = APANMemory(
     time_dim=TIME_DIM,
     message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
     aggregator_module=Agg(),
-    max_mailbox_size=10,
-    num_heads=4,
+    mailbox_size=10,
+    # num_heads=4,
 ).to(device)
+memory._init_message_store()
 
+# breakpoint()
 gnn = GraphAttentionEmbedding(
     in_channels=MEM_DIM,
     out_channels=EMB_DIM,
@@ -193,6 +226,7 @@ min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
 # Train
 losses, times = [], []
 total_train_time = 0
+dataset.load_val_ns()
 for epoch in range(1, NUM_EPOCH + 1):
     if total_train_time > MAX_TR_TIME:
         break
@@ -203,8 +237,16 @@ for epoch in range(1, NUM_EPOCH + 1):
     losses.append(loss)
     times.append(duration)
     total_train_time += duration
+            # validation
+        # start_val = timeit.default_timer()
+    # def test_apan(model, data, loader, neg_sampler, split_mode, neighbor_loader, device, assoc, metric):
+    if not debug:
+        perf_metric_val = test(val_loader, neg_sampler, split_mode='val')#test_apan(model, data, val_loader, neg_sampler, "val", neighbor_loader, device, assoc, metric)
+        print(f"\tValidation {metric}: {perf_metric_val: .4f}")
+        # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
+        # val_perf_list.append(perf_metric_val)
 
-# Evaluate
-dataset.load_test_ns()
-test_metric = test_apan(model, data, test_loader, neg_sampler, "test", neighbor_loader, device, assoc, metric)
-print(f"Final Test {metric}: {test_metric:.4f}")
+# # Evaluate
+# dataset.load_test_ns()
+# test_metric = test_apan(model, data, test_loader, neg_sampler, "test", neighbor_loader, device, assoc, metric)
+# print(f"Final Test {metric}: {test_metric:.4f}")

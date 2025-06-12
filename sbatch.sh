@@ -5,7 +5,7 @@
 #SBATCH -G 1  # Number of GPUs
 
 #SBATCH --constraint=2080ti
-#SBATCH -t 0-04:00:00  # Job time limit
+#SBATCH -t 1-04:00:00  # Job time limit
 
 #SBATCH -o slurm-%j.out  # %j = job ID
 #SBATCH -q long
@@ -13,6 +13,8 @@
 
 module load conda/latest
 conda activate pyg
+
+python apan.py --bs 256
 
 # python main.py --data tgbl-review --bs 65536 
 #33331144 256 33331147 512 33331148 1024 33331150 2048 33331181 4096 33331185 8192 33331189 16384 33331245 32768 33331250 65536
@@ -33,4 +35,4 @@ conda activate pyg
 # python tgn.py --data lastfm --bs 32768
 #33454161 256 33454163 512 33454588 1024 33454591 2048 33454935 4096 33455387 8192 33455792 16384 33456099 32768
 
-python main.py --data tgbl-wiki --bs 8192 --num_epoch 1 --mxtt 24
+# python main.py --data tgbl-wiki --bs 8192 --num_epoch 1 --mxtt 24

@@ -33,6 +33,8 @@ def main():
     custom_parser.add_argument('--mxtt', type=int, default=12)
     custom_parser.add_argument('--debug', type=bool, default=False)
     custom_parser.add_argument('--custom_neg', type=bool, default=False)
+    custom_parser.add_argument('--deliver_to', type=str, default='self')
+
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
     # Step 2: Replace sys.argv with only recognized args for get_args
@@ -41,6 +43,7 @@ def main():
     args.mxtt = custom_args.mxtt
     args.debug = custom_args.debug
     args.custom_neg = custom_args.custom_neg
+    args.deliver_to = custom_args.deliver_to
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -166,6 +169,7 @@ def main():
             'device': device,
             'sampler': sampler,
             'neg_sampler': neg_dest_sampler,
+            'deliver_to': args.deliver_to,
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()

@@ -17,7 +17,66 @@ def train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler):
         neg_dst = neg_sampler.sample(pos_dst.cpu()).to(device)
     return neg_dst
 
+def get_fixed_neighbors(merged, edge_index, n_id):
+    edge_src, edge_tgt = edge_index  # shape [2, E]
+    neighbor_dict = {}
 
+    for node_id, idx in merged.items():
+        # Mask where edge_index[1] == idx
+        mask = (edge_tgt == idx)
+        matched_src = edge_src[mask]
+
+        # Resolve real node IDs
+        real_neighbors = n_id[matched_src].tolist()
+
+        # # Pad or truncate to length k
+        # if len(real_neighbors) < k:
+        #     real_neighbors += [-1] * (k - len(real_neighbors))
+        # else:
+        #     real_neighbors = real_neighbors[:k]
+
+        neighbor_dict[node_id] = real_neighbors
+
+    return neighbor_dict
+
+def latest_index_per_node(src: torch.Tensor):
+    # Step 1: Flip to find the last occurrence
+    flipped_src = src.flip(0)  # reverse the tensor
+    unique_nodes, inverse_idx = flipped_src.unique(return_inverse=True)
+    latest_indices_in_flipped = inverse_idx.flip(0)
+
+    # Step 2: Convert to original indices
+    latest_idx_dict = {}
+    for i, node in enumerate(unique_nodes):
+        # Get the position of the latest occurrence
+        original_idx = len(src) - 1 - (flipped_src == node).nonzero(as_tuple=False)[0].item()
+        latest_idx_dict[node.item()] = original_idx
+
+    return latest_idx_dict
+
+def get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id):
+    # Step 1: Combine and find latest occurrence index per node
+    node_list = torch.cat([src, pos_dst])  # e.g. [0,1,1,2,...]
+    ts = torch.cat([t,t])
+    all_indices = torch.arange(len(node_list), device=node_list.device)
+    src_i = latest_index_per_node(src)
+    dst_i = latest_index_per_node(pos_dst)
+    # merged = {**src_i, **{k: max(v, src_i[k]) if k in src_i else v for k, v in dst_i.items()}}
+    merged = {
+        k: (
+            max(v + src.shape[0], src_i[k]) if k in src_i and v > src_i[k] else
+            src_i[k] if k in src_i else v + src.shape[0]
+        )
+        for k, v in dst_i.items()
+    }
+    merged.update({k: v for k, v in src_i.items() if k not in merged})
+    x = torch.cat([pos_dst, src])
+    result = {k: x[v].item() for k, v in merged.items()}
+    neigh = get_fixed_neighbors(merged, edge_index, n_id)
+    for k, v in result.items():
+        neigh[k].append(v)
+        neigh[k] = list(set(neigh[k]))   
+    return neigh
 
 
 def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device):
@@ -73,6 +132,7 @@ def train(targs, max_seen_id):
     neighbor_loader = targs['sampler']
 
     neg_sampler = targs['neg_sampler']
+    deliver_to = targs['deliver_to']
 
     total_loss = 0
     max_seen_eid = max_seen_id
@@ -95,6 +155,8 @@ def train(targs, max_seen_id):
         root_ts = torch.cat([t, t, t], dim = 0).double()
         root_nodes = torch.cat([src, pos_dst, neg_dst], dim = 0)
         n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+        if deliver_to == "neighbor":
+            neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
         # breakpoint()
         mem_graph_quad_uf  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
         mem_graph_quad = mem_graph_quad_uf
