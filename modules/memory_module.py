@@ -1091,6 +1091,7 @@ class APANMemory(torch.nn.Module):
         aggregator_module: Callable,
         memory_updater_cell: str = "gru",
         mailbox_size: int = 10,
+        num_head: int = 2,
     ):
         super().__init__()
 
@@ -1108,6 +1109,13 @@ class APANMemory(torch.nn.Module):
             self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
         elif memory_updater_cell == "rnn":
             self.memory_updater = RNNCell(message_module.out_channels, memory_dim)
+        elif memory_updater_cell == "transformer":
+            self.memory_updater = TransformerMemoryUpdater(
+                input_dim=message_module.out_channels,
+                memory_dim=memory_dim,
+                nhead=num_head,           # Optional: make configurable
+                num_layers=1
+            )
         else:
             raise ValueError("Invalid memory updater type.")
 
@@ -1187,7 +1195,13 @@ class APANMemory(torch.nn.Module):
         self._assoc[n_id] = torch.arange(n_id.size(0), device=n_id.device)
         msg, t, src, dst = self._compute_msg(n_id)
         aggr = self.aggr_module(msg, self._assoc[src], t, n_id.size(0))
-        updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        # updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        if isinstance(self.memory_updater, (GRUCell, RNNCell)):
+            updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        else:
+            x = torch.stack([self.memory[n_id], aggr], dim=1)
+            updated_memory = self.memory_updater(x)
+            # updated_memory = self.memory_updater(aggr, self.memory[n_id])
         last_update = scatter(t, src, 0, self.last_update.size(0), reduce="max")[n_id]
         return updated_memory, last_update
 
@@ -1211,3 +1225,22 @@ class APANMemory(torch.nn.Module):
             self._update_memory(torch.arange(self.num_nodes, device=self.memory.device))
             self._reset_message_store()
         super().train(mode)
+
+
+
+
+
+class TransformerMemoryUpdater(torch.nn.Module):
+    def __init__(self, input_dim, memory_dim, nhead=2, num_layers=1):
+        super().__init__()
+        encoder_layer = torch.nn.TransformerEncoderLayer(
+            d_model=input_dim, nhead=nhead, batch_first=True
+        )
+        self.encoder = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.linear = torch.nn.Linear(input_dim, memory_dim)
+
+    def forward(self, msg: Tensor, memory: Tensor) -> Tensor:
+        # msg: [batch_size, dim], memory: [batch_size, dim]
+        x = torch.stack([memory, msg], dim=1)  # [B, 2, D]
+        out = self.encoder(x)[:, -1]  # Use updated token
+        return self.linear(out)
