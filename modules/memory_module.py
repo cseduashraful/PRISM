@@ -884,200 +884,200 @@ class DyRepMemory(torch.nn.Module):
 
 
 
-class APANMemory_old(torch.nn.Module):
-    def __init__(
-        self,
-        num_nodes: int,
-        raw_msg_dim: int,
-        memory_dim: int,
-        time_dim: int,
-        message_module: Callable,
-        aggregator_module: Callable,
-        memory_updater_cell: str = "gru",
-        mailbox_size: int = 10,
-        # get_neighbors: Optional[Callable[[Tensor], Dict[int, List[int]]]] = None,
-    ):
-        super().__init__()
+# class APANMemory_old(torch.nn.Module):
+#     def __init__(
+#         self,
+#         num_nodes: int,
+#         raw_msg_dim: int,
+#         memory_dim: int,
+#         time_dim: int,
+#         message_module: Callable,
+#         aggregator_module: Callable,
+#         memory_updater_cell: str = "gru",
+#         mailbox_size: int = 10,
+#         # get_neighbors: Optional[Callable[[Tensor], Dict[int, List[int]]]] = None,
+#     ):
+#         super().__init__()
 
-        self.num_nodes = num_nodes
-        self.raw_msg_dim = raw_msg_dim
-        self.memory_dim = memory_dim
-        self.time_dim = time_dim
-        self.mailbox_size = mailbox_size
-        # self.get_neighbors = get_neighbors
+#         self.num_nodes = num_nodes
+#         self.raw_msg_dim = raw_msg_dim
+#         self.memory_dim = memory_dim
+#         self.time_dim = time_dim
+#         self.mailbox_size = mailbox_size
+#         # self.get_neighbors = get_neighbors
 
-        self.msg_module = message_module
-        self.aggr_module = aggregator_module
-        self.time_enc = TimeEncoder(time_dim)
+#         self.msg_module = message_module
+#         self.aggr_module = aggregator_module
+#         self.time_enc = TimeEncoder(time_dim)
 
-        if memory_updater_cell == "gru":
-            self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
-        elif memory_updater_cell == "rnn":
-            self.memory_updater = RNNCell(message_module.out_channels, memory_dim)
-        else:
-            raise ValueError("Invalid memory updater type.")
+#         if memory_updater_cell == "gru":
+#             self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
+#         elif memory_updater_cell == "rnn":
+#             self.memory_updater = RNNCell(message_module.out_channels, memory_dim)
+#         else:
+#             raise ValueError("Invalid memory updater type.")
 
-        self.register_buffer("memory", torch.empty(num_nodes, memory_dim))
-        self.register_buffer("last_update", torch.empty(num_nodes, dtype=torch.long))
-        self.register_buffer('_assoc', torch.empty(num_nodes,
-                                                   dtype=torch.long))
+#         self.register_buffer("memory", torch.empty(num_nodes, memory_dim))
+#         self.register_buffer("last_update", torch.empty(num_nodes, dtype=torch.long))
+#         self.register_buffer('_assoc', torch.empty(num_nodes,
+#                                                    dtype=torch.long))
 
 
-        # Message store: same shape and logic as TGN
-        i = torch.empty((0,), dtype=torch.long)
-        msg = torch.empty((0, raw_msg_dim))
-        self.msg_store = {j: (i, i, i, msg, i) for j in range(num_nodes)}
+#         # Message store: same shape and logic as TGN
+#         i = torch.empty((0,), dtype=torch.long)
+#         msg = torch.empty((0, raw_msg_dim))
+#         self.msg_store = {j: (i, i, i, msg, i) for j in range(num_nodes)}
 
-        # self._assoc = torch.empty(num_nodes, dtype=torch.long)
+#         # self._assoc = torch.empty(num_nodes, dtype=torch.long)
 
-        self.reset_parameters()
+#         self.reset_parameters()
 
-    def reset_parameters(self):
-        if hasattr(self.msg_module, "reset_parameters"):
-            self.msg_module.reset_parameters()
-        if hasattr(self.aggr_module, "reset_parameters"):
-            self.aggr_module.reset_parameters()
-        self.time_enc.reset_parameters()
-        self.memory_updater.reset_parameters()
-        self.reset_state()
+#     def reset_parameters(self):
+#         if hasattr(self.msg_module, "reset_parameters"):
+#             self.msg_module.reset_parameters()
+#         if hasattr(self.aggr_module, "reset_parameters"):
+#             self.aggr_module.reset_parameters()
+#         self.time_enc.reset_parameters()
+#         self.memory_updater.reset_parameters()
+#         self.reset_state()
 
-    def reset_state(self):
-        zeros(self.memory)
-        zeros(self.last_update)
-        self._reset_message_store()
+#     def reset_state(self):
+#         zeros(self.memory)
+#         zeros(self.last_update)
+#         self._reset_message_store()
 
-    def detach(self):
-        """Detaches the memory from gradient computation."""
-        self.memory.detach_()
+#     def detach(self):
+#         """Detaches the memory from gradient computation."""
+#         self.memory.detach_()
         
-    def _reset_message_store(self):
-        i = self.memory.new_empty((0,), dtype=torch.long)
-        msg = self.memory.new_empty((0, self.raw_msg_dim))
-        self.msg_store = {j: (i, i, i, msg, i) for j in range(self.num_nodes)}
+#     def _reset_message_store(self):
+#         i = self.memory.new_empty((0,), dtype=torch.long)
+#         msg = self.memory.new_empty((0, self.raw_msg_dim))
+#         self.msg_store = {j: (i, i, i, msg, i) for j in range(self.num_nodes)}
 
-    def forward(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
-        # breakpoint()
-        memory, last_update = self._get_updated_memory(n_id)
-        # if self.training:
-        #     memory, last_update = self._get_updated_memory(n_id)
-        # else:
-        #     memory, last_update = self.memory[n_id], self.last_update[n_id]
-        return memory, last_update
+#     def forward(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
+#         # breakpoint()
+#         memory, last_update = self._get_updated_memory(n_id)
+#         # if self.training:
+#         #     memory, last_update = self._get_updated_memory(n_id)
+#         # else:
+#         #     memory, last_update = self.memory[n_id], self.last_update[n_id]
+#         return memory, last_update
 
-    def fill_store(self, src, dst, t, raw_msg, all_neighbors, msg_store):
-        for i in range(len(src)):
-            ux, v = src[i].item(), dst[i].item()
-            timestamp = t[i].unsqueeze(0)
-            msg = raw_msg[i].unsqueeze(0)
+#     def fill_store(self, src, dst, t, raw_msg, all_neighbors, msg_store):
+#         for i in range(len(src)):
+#             ux, v = src[i].item(), dst[i].item()
+#             timestamp = t[i].unsqueeze(0)
+#             msg = raw_msg[i].unsqueeze(0)
 
-            neighbors = all_neighbors[ux]#self.get_neighbors(u, v, n_id, edge_index)
-            for nbr in neighbors:
-                if nbr == ux:
-                    continue
-                old_src, old_dst, old_t, old_msg, old_dla = msg_store[nbr]
-                new_src = torch.cat([old_src, torch.tensor([ux], device=src.device)])
-                new_dst = torch.cat([old_dst, torch.tensor([v], device=src.device)])
-                new_t = torch.cat([old_t, timestamp])
-                new_msg = torch.cat([old_msg, msg])
-                new_dla = torch.cat([old_dla, torch.tensor([nbr], device=src.device)])
+#             neighbors = all_neighbors[ux]#self.get_neighbors(u, v, n_id, edge_index)
+#             for nbr in neighbors:
+#                 if nbr == ux:
+#                     continue
+#                 old_src, old_dst, old_t, old_msg, old_dla = msg_store[nbr]
+#                 new_src = torch.cat([old_src, torch.tensor([ux], device=src.device)])
+#                 new_dst = torch.cat([old_dst, torch.tensor([v], device=src.device)])
+#                 new_t = torch.cat([old_t, timestamp])
+#                 new_msg = torch.cat([old_msg, msg])
+#                 new_dla = torch.cat([old_dla, torch.tensor([nbr], device=src.device)])
 
-                # Keep only the last `mailbox_size` messages
-                if new_msg.size(0) > self.mailbox_size:
-                    new_src = new_src[-self.mailbox_size:]
-                    new_dst = new_dst[-self.mailbox_size:]
-                    new_t = new_t[-self.mailbox_size:]
-                    new_msg = new_msg[-self.mailbox_size:]
-                    new_dla = new_dla[-self.mailbox_size:]
+#                 # Keep only the last `mailbox_size` messages
+#                 if new_msg.size(0) > self.mailbox_size:
+#                     new_src = new_src[-self.mailbox_size:]
+#                     new_dst = new_dst[-self.mailbox_size:]
+#                     new_t = new_t[-self.mailbox_size:]
+#                     new_msg = new_msg[-self.mailbox_size:]
+#                     new_dla = new_dla[-self.mailbox_size:]
 
-                msg_store[nbr] = (new_src, new_dst, new_t, new_msg, new_dla)
+#                 msg_store[nbr] = (new_src, new_dst, new_t, new_msg, new_dla)
 
 
 
-    def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids):
-        # model['memory'].update_state(src, pos_dst, t, msg, neighbors)
-        # if self.get_neighbors is None:
-        #     raise ValueError("get_neighbors function must be provided.")
-        # all_neighbors = self.get_neighbors(u, v, n_id, edge_index)
-        # breakpoint()
-        self._update_memory(n_ids)
-        self.fill_store(src, dst, t, raw_msg, all_neighbors, self.msg_store)
-        self.fill_store(dst, src, t, raw_msg, all_neighbors, self.msg_store)
-        # breakpoint()
+#     def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids):
+#         # model['memory'].update_state(src, pos_dst, t, msg, neighbors)
+#         # if self.get_neighbors is None:
+#         #     raise ValueError("get_neighbors function must be provided.")
+#         # all_neighbors = self.get_neighbors(u, v, n_id, edge_index)
+#         # breakpoint()
+#         self._update_memory(n_ids)
+#         self.fill_store(src, dst, t, raw_msg, all_neighbors, self.msg_store)
+#         self.fill_store(dst, src, t, raw_msg, all_neighbors, self.msg_store)
+#         # breakpoint()
 
-        # for i in range(len(src)):
-        #     ux, v = src[i].item(), dst[i].item()
-        #     timestamp = t[i].unsqueeze(0)
-        #     msg = raw_msg[i].unsqueeze(0)
+#         # for i in range(len(src)):
+#         #     ux, v = src[i].item(), dst[i].item()
+#         #     timestamp = t[i].unsqueeze(0)
+#         #     msg = raw_msg[i].unsqueeze(0)
 
-        #     neighbors = all_neighbors[ux]#self.get_neighbors(u, v, n_id, edge_index)
-        #     for nbr in neighbors:
-        #         if nbr == ux:
-        #             continue
-        #         old_src, old_dst, old_t, old_msg = self.msg_store[nbr]
-        #         new_src = torch.cat([old_src, torch.tensor([ux], device=src.device)])
-        #         new_dst = torch.cat([old_dst, torch.tensor([v], device=src.device)])
-        #         new_t = torch.cat([old_t, timestamp])
-        #         new_msg = torch.cat([old_msg, msg])
+#         #     neighbors = all_neighbors[ux]#self.get_neighbors(u, v, n_id, edge_index)
+#         #     for nbr in neighbors:
+#         #         if nbr == ux:
+#         #             continue
+#         #         old_src, old_dst, old_t, old_msg = self.msg_store[nbr]
+#         #         new_src = torch.cat([old_src, torch.tensor([ux], device=src.device)])
+#         #         new_dst = torch.cat([old_dst, torch.tensor([v], device=src.device)])
+#         #         new_t = torch.cat([old_t, timestamp])
+#         #         new_msg = torch.cat([old_msg, msg])
 
-        #         # Keep only the last `mailbox_size` messages
-        #         if new_msg.size(0) > self.mailbox_size:
-        #             new_src = new_src[-self.mailbox_size:]
-        #             new_dst = new_dst[-self.mailbox_size:]
-        #             new_t = new_t[-self.mailbox_size:]
-        #             new_msg = new_msg[-self.mailbox_size:]
+#         #         # Keep only the last `mailbox_size` messages
+#         #         if new_msg.size(0) > self.mailbox_size:
+#         #             new_src = new_src[-self.mailbox_size:]
+#         #             new_dst = new_dst[-self.mailbox_size:]
+#         #             new_t = new_t[-self.mailbox_size:]
+#         #             new_msg = new_msg[-self.mailbox_size:]
 
-        #         self.msg_store[nbr] = (new_src, new_dst, new_t, new_msg)
-        # print(src)
-        # breakpoint()
-        # print(dst)
-        # n_id = torch.tensor([i for i, (s, _, _, _) in self.msg_store.items() if s.numel() > 0], device=src.device)
-        # if len(n_id) > 0:
-        #     self._update_memory(n_id)
+#         #         self.msg_store[nbr] = (new_src, new_dst, new_t, new_msg)
+#         # print(src)
+#         # breakpoint()
+#         # print(dst)
+#         # n_id = torch.tensor([i for i, (s, _, _, _) in self.msg_store.items() if s.numel() > 0], device=src.device)
+#         # if len(n_id) > 0:
+#         #     self._update_memory(n_id)
 
-    def _update_memory(self, n_id: Tensor):
-        memory, last_update = self._get_updated_memory(n_id)
-        self.memory[n_id] = memory
-        self.last_update[n_id] = last_update
-        for i in n_id.tolist():
-            self.msg_store[i] = tuple(tensor[:0] for tensor in self.msg_store[i])
+#     def _update_memory(self, n_id: Tensor):
+#         memory, last_update = self._get_updated_memory(n_id)
+#         self.memory[n_id] = memory
+#         self.last_update[n_id] = last_update
+#         for i in n_id.tolist():
+#             self.msg_store[i] = tuple(tensor[:0] for tensor in self.msg_store[i])
 
-    def _get_updated_memory(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
-        # breakpoint()
-        self._assoc[n_id] = torch.arange(n_id.size(0), device=n_id.device)
-        msg, t, src, dst = self._compute_msg(n_id)
+#     def _get_updated_memory(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
+#         # breakpoint()
+#         self._assoc[n_id] = torch.arange(n_id.size(0), device=n_id.device)
+#         msg, t, src, dst = self._compute_msg(n_id)
 
-        # print("n_id: ", n_id)
-        # print("src: ", src)
+#         # print("n_id: ", n_id)
+#         # print("src: ", src)
 
-        aggr = self.aggr_module(msg, self._assoc[src], t, n_id.size(0))
-        updated_memory = self.memory_updater(aggr, self.memory[n_id])
-        last_update = scatter(t, src, 0, self.last_update.size(0), reduce="max")[n_id]
-        # breakpoint()
-        return updated_memory, last_update
+#         aggr = self.aggr_module(msg, self._assoc[src], t, n_id.size(0))
+#         updated_memory = self.memory_updater(aggr, self.memory[n_id])
+#         last_update = scatter(t, src, 0, self.last_update.size(0), reduce="max")[n_id]
+#         # breakpoint()
+#         return updated_memory, last_update
 
-    def _compute_msg(self, n_id: Tensor):
-        # breakpoint()
-        data = [self.msg_store[i] for i in n_id.tolist()]
-        # breakpoint()
-        src, dst, t, raw_msg, ux = list(zip(*data))
-        src = torch.cat(src, dim=0)
-        dst = torch.cat(dst, dim=0)
-        ux = torch.cat(ux, dim=0)
-        t = torch.cat(t, dim=0)
-        raw_msg = torch.cat(raw_msg, dim=0)
-        t_rel = t - self.last_update[ux]
-        t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
-        msg = self.msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
-        return msg, t, ux, dst
+#     def _compute_msg(self, n_id: Tensor):
+#         # breakpoint()
+#         data = [self.msg_store[i] for i in n_id.tolist()]
+#         # breakpoint()
+#         src, dst, t, raw_msg, ux = list(zip(*data))
+#         src = torch.cat(src, dim=0)
+#         dst = torch.cat(dst, dim=0)
+#         ux = torch.cat(ux, dim=0)
+#         t = torch.cat(t, dim=0)
+#         raw_msg = torch.cat(raw_msg, dim=0)
+#         t_rel = t - self.last_update[ux]
+#         t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
+#         msg = self.msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
+#         return msg, t, ux, dst
     
-    def train(self, mode: bool = True):
-        """Sets the module in training mode."""
-        if self.training and not mode:
-            # Flush message store to memory in case we just entered eval mode.
-            self._update_memory(
-                torch.arange(self.num_nodes, device=self.memory.device))
-            self._reset_message_store()
-        super().train(mode)
+#     def train(self, mode: bool = True):
+#         """Sets the module in training mode."""
+#         if self.training and not mode:
+#             # Flush message store to memory in case we just entered eval mode.
+#             self._update_memory(
+#                 torch.arange(self.num_nodes, device=self.memory.device))
+#             self._reset_message_store()
+#         super().train(mode)
 
 
 class APANMemory(torch.nn.Module):
