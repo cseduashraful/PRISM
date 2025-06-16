@@ -1244,3 +1244,154 @@ class TransformerMemoryUpdater(torch.nn.Module):
         x = torch.stack([memory, msg], dim=1)  # [B, 2, D]
         out = self.encoder(x)[:, -1]  # Use updated token
         return self.linear(out)
+    
+
+
+
+
+
+class DAAAPANMemory(torch.nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        raw_msg_dim: int,
+        memory_dim: int,
+        time_dim: int,
+        message_module: Callable,
+        aggregator_module: Callable,
+        memory_updater_cell: str = "gru",
+        mailbox_size: int = 10,
+        num_head: int = 2,
+    ):
+        super().__init__()
+
+        self.num_nodes = num_nodes
+        self.raw_msg_dim = raw_msg_dim
+        self.memory_dim = memory_dim
+        self.time_dim = time_dim
+        self.mailbox_size = mailbox_size
+
+        self.msg_module = message_module
+        self.aggr_module = aggregator_module
+        self.time_enc = TimeEncoder(time_dim)
+
+        if memory_updater_cell == "gru":
+            self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
+        elif memory_updater_cell == "rnn":
+            self.memory_updater = RNNCell(message_module.out_channels, memory_dim)
+        elif memory_updater_cell == "transformer":
+            self.memory_updater = TransformerMemoryUpdater(
+                input_dim=message_module.out_channels,
+                memory_dim=memory_dim,
+                nhead=num_head,           # Optional: make configurable
+                num_layers=1
+            )
+        else:
+            raise ValueError("Invalid memory updater type.")
+
+        self.register_buffer("memory", torch.empty(num_nodes, memory_dim))
+        self.register_buffer("last_update", torch.empty(num_nodes, dtype=torch.long))
+        self.register_buffer("_assoc", torch.empty(num_nodes, dtype=torch.long))
+
+        self.reset_parameters()
+
+    def _init_message_store(self):
+        device = self.memory.device
+        self.msg_src = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
+        self.msg_dst = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
+        self.msg_t = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
+        self.msg_dla = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
+        self.msg_raw = torch.zeros((self.num_nodes, self.mailbox_size, self.raw_msg_dim), device=device)
+        self.msg_counts = torch.zeros(self.num_nodes, dtype=torch.long, device=device)
+
+    def reset_parameters(self):
+        if hasattr(self.msg_module, "reset_parameters"):
+            self.msg_module.reset_parameters()
+        if hasattr(self.aggr_module, "reset_parameters"):
+            self.aggr_module.reset_parameters()
+        self.time_enc.reset_parameters()
+        self.memory_updater.reset_parameters()
+        self.reset_state()
+
+    def reset_state(self):
+        zeros(self.memory)
+        zeros(self.last_update)
+        self._init_message_store()
+
+    def detach(self):
+        self.memory.detach_()
+
+    def _reset_message_store(self):
+        self.msg_src.fill_(-1)
+        self.msg_dst.fill_(-1)
+        self.msg_t.fill_(-1)
+        self.msg_dla.fill_(-1)
+        self.msg_raw.zero_()
+        self.msg_counts.zero_()
+
+    def forward(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
+        memory, last_update = self._get_updated_memory(n_id)
+        return memory, last_update
+
+    def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids):
+        self._update_memory(n_ids)
+        self._fill_tensor_store(src, dst, t, raw_msg, all_neighbors)
+        self._fill_tensor_store(dst, src, t, raw_msg, all_neighbors)
+
+    def _fill_tensor_store(self, src, dst, t, raw_msg, all_neighbors):
+        for i in range(src.size(0)):
+            u = src[i].item()
+            v = dst[i].item()
+            neighbors = all_neighbors[u]
+            for nbr in neighbors:
+                if nbr == u:
+                    continue
+                count = self.msg_counts[nbr].item()
+                write_idx = count % self.mailbox_size
+                self.msg_src[nbr, write_idx] = u
+                self.msg_dst[nbr, write_idx] = v
+                self.msg_t[nbr, write_idx] = t[i]
+                self.msg_raw[nbr, write_idx] = raw_msg[i]
+                self.msg_dla[nbr, write_idx] = nbr
+                self.msg_counts[nbr] += 1
+
+    def _update_memory(self, n_id: Tensor):
+        memory, last_update = self._get_updated_memory(n_id)
+        self.memory[n_id] = memory
+        self.last_update[n_id] = last_update
+        self.msg_counts[n_id] = 0
+
+    def _get_updated_memory(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
+        self._assoc[n_id] = torch.arange(n_id.size(0), device=n_id.device)
+        msg, t, src, dst = self._compute_msg(n_id)
+        aggr = self.aggr_module(msg, self._assoc[src], t, n_id.size(0))
+        # updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        if isinstance(self.memory_updater, (GRUCell, RNNCell)):
+            updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        else:
+            x = torch.stack([self.memory[n_id], aggr], dim=1)
+            updated_memory = self.memory_updater(x)
+            # updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        last_update = scatter(t, src, 0, self.last_update.size(0), reduce="max")[n_id]
+        return updated_memory, last_update
+
+    def _compute_msg(self, n_id: Tensor):
+        src = self.msg_src[n_id].flatten()
+        dst = self.msg_dst[n_id].flatten()
+        t = self.msg_t[n_id].flatten()
+        raw_msg = self.msg_raw[n_id].reshape(-1, self.raw_msg_dim)
+        ux = self.msg_dla[n_id].flatten()
+
+        mask = (t >= 0)
+        src, dst, t, raw_msg, ux = src[mask], dst[mask], t[mask], raw_msg[mask], ux[mask]
+
+        t_rel = t - self.last_update[ux.to(self.last_update.device)]
+        t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
+        msg = self.msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
+        return msg, t, ux, dst
+
+    def train(self, mode: bool = True):
+        if self.training and not mode:
+            self._update_memory(torch.arange(self.num_nodes, device=self.memory.device))
+            self._reset_message_store()
+        super().train(mode)

@@ -120,10 +120,12 @@ class Recent_K_Sampler:
         # print("collected_ts_indices: ", collected_ts_indices)
         # print("eid_chunks_flattened: ", eid_chunks_flattened)
 
+        # breakpoint()
         sampled_eids = eid_chunks_flattened[collected_ts_indices]
         sampled_eids[collected_ts_indices == -1] = -1
 
         sampled_other_nodes = other_node_chunks_flattened[collected_ts_indices]
+        sampled_other_nodes[collected_ts_indices == -1] = -1
 
         # Step 5: Rotate prefetch buffer for next batch
         self.current_prefetch_idx = (self.current_prefetch_idx + 1) % 2

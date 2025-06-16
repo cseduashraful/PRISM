@@ -33,7 +33,7 @@ def main():
     custom_parser.add_argument('--mxtt', type=int, default=12)
     custom_parser.add_argument('--debug', type=bool, default=False)
     custom_parser.add_argument('--custom_neg', type=bool, default=False)
-    custom_parser.add_argument('--deliver_to', type=str, default='self')
+    custom_parser.add_argument('--deliver_to', type=str, default='neighbor')
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 

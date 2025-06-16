@@ -112,6 +112,19 @@ def filter_mem_graph(mem_graph_quad_uf, remap):
     mask = torch.isin(mem_graph_quad_uf[2], used)
     return  mem_graph_quad_uf[:, mask]
     
+def append_unique_rows(od, new_rows):
+    # Ensure both inputs are 2D with shape [N, 2]
+    assert od.shape[1] == 2 and new_rows.shape[1] == 2
+
+    # Compute scalar keys for comparison
+    max_b = torch.cat([od[:, 1], new_rows[:, 1]]).max() + 1
+    od_keys = od[:, 0] * max_b + od[:, 1]
+    new_keys = new_rows[:, 0] * max_b + new_rows[:, 1]
+
+    # Find new entries not already in od
+    mask = ~torch.isin(new_keys, od_keys)
+
+    return torch.cat([od, new_rows[mask]], dim=0)
 
 
 def train(targs, max_seen_id):
@@ -155,75 +168,84 @@ def train(targs, max_seen_id):
         root_ts = torch.cat([t, t, t], dim = 0).double()
         root_nodes = torch.cat([src, pos_dst, neg_dst], dim = 0)
         n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+        # breakpoint()
         if deliver_to == "neighbor":
-            neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
-        # breakpoint()
-        mem_graph_quad_uf  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
-        mem_graph_quad = mem_graph_quad_uf
+            # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
+            bsrc = torch.stack([torch.arange(src.shape[0]).to(device), pos_dst])
+            bdst = torch.stack([torch.arange(src.shape[0], 2*src.shape[0]).to(device), src])
+            od = torch.cat([ bsrc.T, bdst.T], dim=0)
+            od_updated = append_unique_rows(od, neighbor_loader.id_to_pair)
+            tmp = od_updated[:,0]%bs
+            od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
+            breakpoint()
 
-        remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , src, pos_dst)
-        remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
-        remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
+        else:
+            mem_graph_quad_uf  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
+            mem_graph_quad = mem_graph_quad_uf
 
-        # filtered =  False
-        # if filtered:
-        #     mem_graph_quad = filter_mem_graph(mem_graph_quad_uf, remap)
-        # else:
-        #     mem_graph_quad = mem_graph_quad_uf
-        
-        # from exclude.longdp import max_depth
-        # max_depth(mem_graph_quad, remap)
-        # breakpoint()
-        
+            remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , src, pos_dst)
+            remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
+            remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
 
-        
-        b_eid = mem_graph_quad[3]#e_id[bmsk]
-        b_eid_cpu = b_eid.cpu()
-        b_t = dataset['data'].t[b_eid_cpu].to(device)
-        b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-        b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+            # filtered =  False
+            # if filtered:
+            #     mem_graph_quad = filter_mem_graph(mem_graph_quad_uf, remap)
+            # else:
+            #     mem_graph_quad = mem_graph_quad_uf
+            
+            # from exclude.longdp import max_depth
+            # max_depth(mem_graph_quad, remap)
+            # breakpoint()
+            
 
-        z, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
-        z = torch.cat([z[remap], z[3*bs:]])
-        last_update = torch.cat([last_update[remap], last_update[3*bs:]])
-        
-        ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , src, pos_dst)
+            
+            b_eid = mem_graph_quad[3]#e_id[bmsk]
+            b_eid_cpu = b_eid.cpu()
+            b_t = dataset['data'].t[b_eid_cpu].to(device)
+            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+            b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
 
-        updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
-        edge_index = torch.stack([updated_src, edge_index[1,:]])
+            z, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+            z = torch.cat([z[remap], z[3*bs:]])
+            last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+            
+            ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , src, pos_dst)
 
-        z = model['gnn'](
-            z,
-            last_update,
-            edge_index,
-            dataset['data'].t[e_id].to(device),
-            dataset['data'].msg[e_id].to(device),
-        )
-        # breakpoint()
-        
-        pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
-        neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+            updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
+            edge_index = torch.stack([updated_src, edge_index[1,:]])
+
+            z = model['gnn'](
+                z,
+                last_update,
+                edge_index,
+                dataset['data'].t[e_id].to(device),
+                dataset['data'].msg[e_id].to(device),
+            )
+            # breakpoint()
+            
+            pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+            neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
 
 
-        # breakpoint()
-        loss = criterion(pos_out, torch.ones_like(pos_out))
-        loss += criterion(neg_out, torch.zeros_like(neg_out))
+            # breakpoint()
+            loss = criterion(pos_out, torch.ones_like(pos_out))
+            loss += criterion(neg_out, torch.zeros_like(neg_out))
 
-        loss.backward()
-        optimizer.step()
-        # model['memory'].update_state(src, pos_dst, t, msg)
-        z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
-        #model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
-        z_m = torch.cat([z_m[remap], z_m[3*bs:]])
-        last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+            loss.backward()
+            optimizer.step()
+            # model['memory'].update_state(src, pos_dst, t, msg)
+            z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+            #model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
+            z_m = torch.cat([z_m[remap], z_m[3*bs:]])
+            last_update = torch.cat([last_update[remap], last_update[3*bs:]])
 
-        model['memory'].update_state_v2(
-            mem_graph_quad_uf[2], remap, bs, 
-            src, pos_dst, t, msg, 
-            n_id, last_update, z_m)
-        model['memory'].detach()
+            model['memory'].update_state_v2(
+                mem_graph_quad_uf[2], remap, bs, 
+                src, pos_dst, t, msg, 
+                n_id, last_update, z_m)
+            model['memory'].detach()
 
-        total_loss += float(loss) * batch.num_events
+            total_loss += float(loss) * batch.num_events
         max_seen_eid += batch.num_events
         # break
     return total_loss/dataset['train_length'], max_seen_eid
