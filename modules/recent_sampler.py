@@ -2,12 +2,13 @@ import sampler
 import torch
 
 class Recent_K_Sampler:
-    def __init__(self, sampler_data, max_chunk_per_node, k, num_nodes, device='cuda'):
+    def __init__(self, sampler_data, max_chunk_per_node, k, num_nodes, device='cuda', apan = False):
         self.device = device
         self.max_chunk_per_node = max_chunk_per_node
         self.k = k
         self.num_nodes = num_nodes
         self.assoc = torch.arange(self.num_nodes, device = device)
+        self.apan = apan
 
         # Preprocess and store TCI structure on CPU
         self.chunk_map = torch.tensor(sampler_data['chunk_map'], dtype=torch.long, device=device)
@@ -126,27 +127,12 @@ class Recent_K_Sampler:
 
         # Step 5: Rotate prefetch buffer for next batch
         self.current_prefetch_idx = (self.current_prefetch_idx + 1) % 2
-
-        return self.transform_eids(sampled_eids, sampled_other_nodes, root_node, neg_cnt = neg_cnt)
+        # print("here:  ", self.apan)
+        if self.apan:
+            return self.transform_eids_for_apan(sampled_eids, sampled_other_nodes, root_node, neg_cnt = neg_cnt)
+        else:
+            return self.transform_eids(sampled_eids, sampled_other_nodes, root_node, neg_cnt = neg_cnt)
     
-
-    # def transform_eids_old(self, sampled_eids, sampled_other_nodes, root_node):
-    #     batch_size, k = sampled_eids.shape
-
-    #     # Step 1: Flatten eids and filter valid
-    #     eids = sampled_eids.view(-1)
-    #     valid_mask = eids != -1
-    #     valid_eids = eids[valid_mask].cpu()
-    #     on = torch.cat([sampled_other_nodes.view(-1)[valid_mask],root_node] ).unique()
-    #     self.assoc[on] = torch.arange(root_node.shape[0], root_node.shape[0]+on.shape[0], device = self.device)
-        
-    #     mapped_sampled_other_nodes  = self.assoc[sampled_other_nodes]
-    #     edge_index_dst = torch.arange(root_node.shape[0], device=self.device).unsqueeze(1).expand(root_node.shape[0], k)
-
-    #     edge_index = torch.stack([mapped_sampled_other_nodes.view(-1)[valid_mask],edge_index_dst.reshape(-1)[valid_mask]], dim=0)
-    #     n_ids = torch.cat([root_node, on])
-
-    #     return n_ids, valid_eids, edge_index
 
     def find_recent_occurrences(self, edge_index, pos_node_s, pos_node_d, batch_size, assoc):
         recent_indices = []
@@ -203,24 +189,83 @@ class Recent_K_Sampler:
         # breakpoint()
         edge_index = torch.stack([mapped_other_nodes[valid_mask], edge_index_dst[valid_mask]], dim=0)
 
-        # edge_index = torch.stack([other_nodes_flat[valid_mask], edge_index_dst[valid_mask]], dim=0)
-        # recent = self.find_recent_occurrences(edge_index, pos_node_s, pos_node_d, bs, self.assoc)
-        # edge_index = torch.stack([recent, edge_index_dst[valid_mask]], dim=0)
-        
-        # print(recent)
-        # breakpoint()
-
         # Step 5: Concatenate n_ids (root_node + all sampled other nodes ONCE)
 
         n_ids = torch.cat([root_node, on])
-
-        # x, y, z = self.transform_eids_old(sampled_eids, sampled_other_nodes, root_node)
-        # if torch.all(x == n_ids) and torch.all(y == valid_eids) and torch.all(z == edge_index):
-        #     print("OK")
-        # else:
-        #     breakpoint()
-        # breakpoint()
         return n_ids, valid_eids, edge_index
+    def map_valid(self, x, offset):
+        mask = x != -1
+        new_x = torch.full_like(x, -1)
+
+        # Get valid values and their row indices
+        flat_vals = x[mask]
+        row_idx = torch.arange(x.size(0), device=x.device).repeat_interleave(x.size(1))[mask.view(-1)]
+
+        # Build [row_idx, node_id] pairs
+        row_node_pairs = torch.stack([row_idx, flat_vals], dim=1)  # shape: [num_valid, 2]
+
+        # Get unique pairs and inverse indices
+        unique_pairs, inverse = torch.unique(row_node_pairs, dim=0, return_inverse=True)
+
+        inverse = inverse + offset
+        # Fill new_x with ID
+        new_x[mask] = inverse
+
+        # Outputs:
+        # new_x → mapped tensor with IDs
+        # unique_pairs → reverse mapping: id_to_pair[i] = [row_index, node_id]
+        id_to_pair = unique_pairs
+
+        # print("Remapped tensor:\n", new_x)
+        # print("Reverse mapping (id → [row, node_id]):\n", id_to_pair)
+        return new_x, id_to_pair
+    
+    def transform_eids_for_apan(self, sampled_eids, sampled_other_nodes, root_node, neg_cnt = 1):
+        # breakpoint()
+        batch_size, k = sampled_eids.shape
+
+        # Step 1: Flatten and find valid entries
+        eids_flat = sampled_eids.view(-1)
+        # other_nodes_flat = sampled_other_nodes.view(-1)
+        # print(eids_flat)
+
+        valid_mask = (eids_flat != -1)
+        valid_eids = eids_flat[valid_mask].cpu()
+        # valid_other_nodes = other_nodes_flat[valid_mask]
+
+        mapped_other_nodes, id_to_pair = self.map_valid(sampled_other_nodes, root_node.shape[0])
+        mapped_other_nodes = mapped_other_nodes.view(-1)
+        n_ids = torch.cat([root_node, id_to_pair[:, 1]])
+        self.id_to_pair = id_to_pair
+        self.offset =  root_node.shape[0]
+        # breakpoint()
+
+        # Step 2: Always update assoc mapping (even if already present)
+        # on = valid_other_nodes.unique()
+        # on = torch.cat([sampled_other_nodes.view(-1)[valid_mask],root_node] ).unique()
+        # self.assoc[on] = torch.arange(root_node.shape[0], root_node.shape[0] + on.shape[0], device=self.device)
+
+        # # Step 3: Map sampled other nodes
+        # mapped_other_nodes = self.assoc[other_nodes_flat]
+
+        # breakpoint()
+
+        # bs = root_node.shape[0]//(2+neg_cnt) 
+        # pos_node_s = root_node[:bs]
+        # pos_node_d = root_node[bs:2*bs]
+
+
+        # Step 4: Build edge indices
+        edge_index_dst = torch.arange(root_node.shape[0], device=self.device).unsqueeze(1).expand(root_node.shape[0], k)
+        edge_index_dst = edge_index_dst.reshape(-1)
+        # breakpoint()
+        edge_index = torch.stack([mapped_other_nodes[valid_mask], edge_index_dst[valid_mask]], dim=0)
+
+        # Step 5: Concatenate n_ids (root_node + all sampled other nodes ONCE)
+
+        # n_ids = torch.cat([root_node, on])
+        return n_ids, valid_eids, edge_index
+
 
 
 

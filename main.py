@@ -67,6 +67,7 @@ def main():
     MODEL_NAME = 'SDA-TGN'
     MAX_TR_TIME = args.mxtt*60*60#12*60*60
     debug = args.debug
+    APAN = args.deliver_to == 'neighbor'
     # ==========
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -102,7 +103,7 @@ def main():
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
 
     # breakpoint()
-    sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes)
+    sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, apan = APAN)
        # for saving the results...
     results_path = f'{osp.dirname(osp.abspath(__file__))}/saved_results'
     if not osp.exists(results_path):
