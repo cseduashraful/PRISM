@@ -1,7 +1,7 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
 from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler
-from modules.memory_module import DAATGNMemory
+from modules.memory_module import DAATGNMemory, DAAAPANMemory
 
 from modules.neg_sampler import NegLinkSamplerDest
 from modules.emb_module import GraphAttentionEmbedding
@@ -120,14 +120,24 @@ def main():
         # set the seed for deterministic results...
         torch.manual_seed(run_idx + SEED)
         set_random_seed(run_idx + SEED)
-        memory = DAATGNMemory(
-            data.num_nodes,
-            data.msg.size(-1),
-            MEM_DIM,
-            TIME_DIM,
-            message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
-            aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
-        ).to(device)
+        if args.deliver_to == "self":
+            memory = DAATGNMemory(
+                data.num_nodes,
+                data.msg.size(-1),
+                MEM_DIM,
+                TIME_DIM,
+                message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
+                aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
+            ).to(device)
+        else:
+            memory = DAAAPANMemory(
+                data.num_nodes,
+                data.msg.size(-1),
+                MEM_DIM,
+                TIME_DIM,
+                message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
+                aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
+            ).to(device)
 
         gnn = GraphAttentionEmbedding(
             in_channels=MEM_DIM,
