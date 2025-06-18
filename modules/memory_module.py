@@ -1168,9 +1168,94 @@ class APANMemory(torch.nn.Module):
         self._fill_tensor_store(src, dst, t, raw_msg, all_neighbors)
         self._fill_tensor_store(dst, src, t, raw_msg, all_neighbors)
     
-    
+    # def _fill_tensor_store(self, src, dst, t, raw_msg, all_neighbors):
+    #     device = src.device
+    #     B = src.size(0)
 
+    #     breakpoint()
+    #     # Build global vectors
+    #     neighbors_list = []
+    #     repeat_index = []
+
+    #     for i in range(B):
+    #         u = src[i].item()
+    #         neighbors = all_neighbors[u]
+    #         neighbors = neighbors[neighbors != u]  # remove self-loop
+    #         neighbors_list.append(neighbors)
+    #         repeat_index.append(torch.full((len(neighbors),), i, dtype=torch.long, device=device))
+
+    #     # Stack all neighbors and gather values accordingly
+    #     all_nbrs = torch.cat(neighbors_list)  # (total_neighbors,)
+    #     src_rep = src[torch.cat(repeat_index)]  # repeat src[i] for all neighbors of src[i]
+    #     dst_rep = dst[torch.cat(repeat_index)]
+    #     t_rep = t[torch.cat(repeat_index)]
+    #     raw_msg_rep = raw_msg[torch.cat(repeat_index)]
+        
+    #     count_vals = self.msg_counts[all_nbrs]
+    #     write_idx = count_vals % self.mailbox_size
+
+    #     # Assign values
+    #     self.msg_src[all_nbrs, write_idx] = src_rep
+    #     self.msg_dst[all_nbrs, write_idx] = dst_rep
+    #     self.msg_t[all_nbrs, write_idx] = t_rep
+    #     self.msg_raw[all_nbrs, write_idx] = raw_msg_rep
+    #     self.msg_dla[all_nbrs, write_idx] = all_nbrs
+
+    #     # Increment counters
+    #     self.msg_counts[all_nbrs] += 1
     def _fill_tensor_store(self, src, dst, t, raw_msg, all_neighbors):
+        device = src.device
+        B = src.size(0)
+
+        neighbors_list = []
+        repeat_index = []
+
+        for i in range(B):
+            u = src[i].item()
+            if u >= len(all_neighbors):  # safeguard
+                continue
+
+            neighbors_u = all_neighbors[u]
+            if not isinstance(neighbors_u, torch.Tensor):
+                neighbors_u = torch.tensor(neighbors_u, device=device, dtype=torch.long)
+
+            # skip if empty
+            if neighbors_u.numel() == 0:
+                continue
+
+            # remove self-loop
+            neighbors_u = neighbors_u[neighbors_u != u]
+            if neighbors_u.numel() == 0:
+                continue
+
+            neighbors_list.append(neighbors_u)
+            repeat_index.append(torch.full((neighbors_u.numel(),), i, device=device, dtype=torch.long))
+
+        if not neighbors_list:
+            return  # nothing to do
+
+        all_nbrs = torch.cat(neighbors_list)
+        idx = torch.cat(repeat_index)
+
+        src_rep = src[idx]
+        dst_rep = dst[idx]
+        t_rep = t[idx]
+        raw_msg_rep = raw_msg[idx]
+
+        counts = self.msg_counts[all_nbrs]
+        write_idx = counts % self.mailbox_size
+
+        self.msg_src[all_nbrs, write_idx] = src_rep
+        self.msg_dst[all_nbrs, write_idx] = dst_rep
+        self.msg_t[all_nbrs, write_idx] = t_rep
+        self.msg_raw[all_nbrs, write_idx] = raw_msg_rep
+        self.msg_dla[all_nbrs, write_idx] = all_nbrs
+
+        self.msg_counts[all_nbrs] += 1
+
+
+
+    def _fill_tensor_store_old(self, src, dst, t, raw_msg, all_neighbors):
         for i in range(src.size(0)):
             u = src[i].item()
             v = dst[i].item()
@@ -1252,6 +1337,17 @@ class TransformerMemoryUpdater(torch.nn.Module):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
 class DAAAPANMemory(torch.nn.Module):
     def __init__(
         self,
@@ -1305,7 +1401,7 @@ class DAAAPANMemory(torch.nn.Module):
         self.msg_dst = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
         self.msg_t = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
         self.msg_dla = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
-        self.msg_raw = torch.zeros((self.num_nodes, self.mailbox_size, self.raw_msg_dim), device=device)
+        self.msg_raw = torch.zeros((self.num_nodes, self.mailbox_size, self.raw_msg_dim))
         self.msg_counts = torch.zeros(self.num_nodes, dtype=torch.long, device=device)
 
     def reset_parameters(self):
@@ -1362,7 +1458,47 @@ class DAAAPANMemory(torch.nn.Module):
         self._fill_tensor_store(src, dst, t, raw_msg, all_neighbors)
         self._fill_tensor_store(dst, src, t, raw_msg, all_neighbors)
     
+
     def update_state(self, n_id, z, last_update, store_quad, store_t, store_msg):
+        # Step 1: Update memory and last update
+        unique_nid, inverse_indices = torch.unique(n_id, return_inverse=True)
+        max_vals, max_indices = scatter_max(last_update, inverse_indices, dim=0)
+        self.memory[unique_nid] = z[max_indices]
+        self.last_update[unique_nid] = max_vals
+        self.msg_counts[unique_nid] = 0  # reset counts
+
+        # Step 2: Sort store_quad by time (column 3)
+        store_quad = store_quad.T  # now shape [4, N]
+        time_col = store_quad[3]
+        sorted_idx = torch.argsort(time_col)
+
+        store_quad_sorted = store_quad[:, sorted_idx]  # shape [4, N]
+        store_t_sorted = store_t[sorted_idx]
+        store_msg_sorted = store_msg[sorted_idx.cpu()]  # assuming msg on CPU
+
+        # Step 3: Vectorize mailbox write
+        src_idx = n_id[store_quad_sorted[0]]  # shape [N]
+        dst_idx = n_id[store_quad_sorted[1]]
+        dla_idx = store_quad_sorted[2]        # already node ids
+        t_vals = store_t_sorted               # shape [N]
+        msg_vals = store_msg_sorted           # shape [N, msg_dim]
+
+        # Get current counts and compute write indices
+        count_vals = self.msg_counts[dla_idx]
+        write_idx = count_vals % self.mailbox_size
+
+        # Write to mailboxes
+        self.msg_src[dla_idx, write_idx] = src_idx
+        self.msg_dst[dla_idx, write_idx] = dst_idx
+        self.msg_t[dla_idx, write_idx] = t_vals
+        self.msg_raw[dla_idx, write_idx] = msg_vals
+        self.msg_dla[dla_idx, write_idx] = dla_idx
+
+        # Increment counts
+        self.msg_counts[dla_idx] += 1
+
+
+    def update_state_not_vectorized(self, n_id, z, last_update, store_quad, store_t, store_msg):
         unique_nid, inverse_indices = torch.unique(n_id, return_inverse=True)
         max_vals, max_indices = scatter_max(last_update, inverse_indices, dim=0)
         self.memory[unique_nid] = z[max_indices]
@@ -1373,15 +1509,17 @@ class DAAAPANMemory(torch.nn.Module):
         sorted_idx = torch.argsort(store_quad[:, 3])
         store_quad_sorted = store_quad[sorted_idx]
         store_t_sorted = store_t[sorted_idx]
-        store_msg_sorted = store_msg[sorted_idx]
 
+        sorted_idx_cpu = sorted_idx.cpu()
+        store_msg_sorted = store_msg[sorted_idx_cpu]
+        # breakpoint()
         for i in range(store_quad_sorted.shape[0]):
             nbr = store_quad_sorted[i, 2]
             count = self.msg_counts[nbr].item()
             write_idx = count % self.mailbox_size
-            self.msg_src[nbr, write_idx] = store_quad_sorted[i, 0]
-            self.msg_dst[nbr, write_idx] = store_quad_sorted[i, 1]
-            self.msg_t[nbr, write_idx] = store_t[i]
+            self.msg_src[nbr, write_idx] = n_id[store_quad_sorted[i, 0]]
+            self.msg_dst[nbr, write_idx] = n_id[store_quad_sorted[i, 1]]
+            self.msg_t[nbr, write_idx] = store_t_sorted[i]
             self.msg_raw[nbr, write_idx] = store_msg_sorted[i]
             self.msg_dla[nbr, write_idx] = nbr
             self.msg_counts[nbr] += 1
@@ -1432,7 +1570,8 @@ class DAAAPANMemory(torch.nn.Module):
         src = self.msg_src[n_id].flatten()
         dst = self.msg_dst[n_id].flatten()
         t = self.msg_t[n_id].flatten()
-        raw_msg = self.msg_raw[n_id].reshape(-1, self.raw_msg_dim)
+        rm = self.msg_raw[n_id.cpu()].to(dst.device)
+        raw_msg = rm.reshape(-1, self.raw_msg_dim)
         ux = self.msg_dla[n_id].flatten()
 
         mask = (t >= 0)
@@ -1440,7 +1579,13 @@ class DAAAPANMemory(torch.nn.Module):
 
         t_rel = t - self.last_update[ux.to(self.last_update.device)]
         t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
+        # print(src.max())
+        # print(dst.max())
+        # print(src.min())
+        # print(dst.min())
+        # breakpoint()
         msg = self.msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
+
         return msg, t, ux, dst
 
     def _intra_batch_compute_msg(self, mem_graph, n_id, t, raw_msg):

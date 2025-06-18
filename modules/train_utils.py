@@ -231,6 +231,7 @@ def train(targs, max_seen_id):
             od = torch.cat([ bsrc.T, bdst.T, bndst.T, neighbor_loader.id_to_pair], dim=0)
             od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
             mem_graph_quad, store_quad = getMem_graph_apan(od_updated,bs, max_seen_eid, device)
+            print("Memgraph Constructed")
             # breakpoint()
             b_eid = mem_graph_quad[3]#e_id[bmsk]
             b_eid_cpu = b_eid.cpu()
@@ -239,6 +240,7 @@ def train(targs, max_seen_id):
             b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             # breakpoint()
+            print("Updated memory Computed")
             z = model['gnn'](
                 z,
                 last_update,
@@ -247,7 +249,7 @@ def train(targs, max_seen_id):
                 dataset['data'].msg[e_id].to(device),
             )
             # breakpoint()
-            
+            print("Embedding generated")
             pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
             neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
 
@@ -255,12 +257,13 @@ def train(targs, max_seen_id):
             # breakpoint()
             loss = criterion(pos_out, torch.ones_like(pos_out))
             loss += criterion(neg_out, torch.zeros_like(neg_out))
-
+            print("batch loss computed")
             loss.backward()
             optimizer.step()
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             store_eid = store_quad[3].cpu()
-            model['memory'].update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid].to(device))
+            model['memory'].update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
+            print("State Updated")
             model['memory'].detach()
             total_loss += float(loss) * batch.num_events
             
