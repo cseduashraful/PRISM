@@ -14,7 +14,8 @@
 module load conda/latest
 conda activate pyg
 
-python apan.py --bs 64
+# python apan.py --bs 64
+python main.py --bs 2048 --lr 0.001 --debug False
 
 # python main.py --data tgbl-review --bs 65536 
 #33331144 256 33331147 512 33331148 1024 33331150 2048 33331181 4096 33331185 8192 33331189 16384 33331245 32768 33331250 65536

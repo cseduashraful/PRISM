@@ -30,7 +30,7 @@ debug = True
 
 def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
-    custom_parser.add_argument('--mxtt', type=int, default=12)
+    custom_parser.add_argument('--mxtt', type=int, default=24)
     custom_parser.add_argument('--debug', type=bool, default=False)
     custom_parser.add_argument('--custom_neg', type=bool, default=False)
     custom_parser.add_argument('--deliver_to', type=str, default='neighbor')

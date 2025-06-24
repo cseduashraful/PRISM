@@ -231,7 +231,7 @@ def train(targs, max_seen_id):
             od = torch.cat([ bsrc.T, bdst.T, bndst.T, neighbor_loader.id_to_pair], dim=0)
             od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
             mem_graph_quad, store_quad = getMem_graph_apan(od_updated,bs, max_seen_eid, device)
-            print("Memgraph Constructed")
+            # print("Memgraph Constructed")
             # breakpoint()
             b_eid = mem_graph_quad[3]#e_id[bmsk]
             b_eid_cpu = b_eid.cpu()
@@ -240,7 +240,7 @@ def train(targs, max_seen_id):
             b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             # breakpoint()
-            print("Updated memory Computed")
+            # print("Updated memory Computed")
             z = model['gnn'](
                 z,
                 last_update,
@@ -249,7 +249,7 @@ def train(targs, max_seen_id):
                 dataset['data'].msg[e_id].to(device),
             )
             # breakpoint()
-            print("Embedding generated")
+            # print("Embedding generated")
             pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
             neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
 
@@ -257,13 +257,13 @@ def train(targs, max_seen_id):
             # breakpoint()
             loss = criterion(pos_out, torch.ones_like(pos_out))
             loss += criterion(neg_out, torch.zeros_like(neg_out))
-            print("batch loss computed")
+            # print("batch loss computed")
             loss.backward()
             optimizer.step()
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             store_eid = store_quad[3].cpu()
             model['memory'].update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
-            print("State Updated")
+            # print("State Updated")
             model['memory'].detach()
             total_loss += float(loss) * batch.num_events
             
@@ -361,6 +361,7 @@ def test_new(targs, max_seen_id, split_mode):
     model = targs['model']
     neighbor_loader = targs['sampler']
     dataset = targs['dataset']
+    deliver_to = targs['deliver_to']
     if split_mode == 'val':
         loader = dataset['val_dataloader']
     else:
@@ -407,27 +408,48 @@ def test_new(targs, max_seen_id, split_mode):
             n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
 
             # bmsk = e_id>max_seen_eid
+            if deliver_to == "neighbor":
+                # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
+                # breakpoint()
+                bsrc = torch.stack([torch.arange(pos_src.shape[0]).to(device), pos_dst.to(device)])
+                bdst = torch.stack([torch.arange(pos_src.shape[0], 2*pos_src.shape[0]).to(device), pos_src.to(device)])
+                bndst = torch.stack([torch.arange(2*pos_src.shape[0], 3*pos_src.shape[0]).to(device), torch.full((pos_src.shape[0],), -1).to(device)])
+            
+                od = torch.cat([ bsrc.T, bdst.T, bndst.T, neighbor_loader.id_to_pair], dim=0)
+                od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
+                mem_graph_quad, store_quad = getMem_graph_apan(od_updated,bs, max_seen_eid, device)
+                # print("Memgraph Constructed")
+                # breakpoint()
+                b_eid = mem_graph_quad[3]#e_id[bmsk]
+                b_eid_cpu = b_eid.cpu()
+                # breakpoint()
+                b_t = dataset['data'].t[b_eid_cpu].to(device)
+                b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+                
+            else:
 
-            mem_graph_quad = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, pos_src, pos_dst, device)
-            b_eid = mem_graph_quad[3]#e_id[bmsk]
-            b_eid_cpu = b_eid.cpu()
-            b_t = dataset['data'].t[b_eid_cpu].to(device)
-            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-            b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
 
-            z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+                mem_graph_quad = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, pos_src, pos_dst, device)
+                b_eid = mem_graph_quad[3]#e_id[bmsk]
+                b_eid_cpu = b_eid.cpu()
+                b_t = dataset['data'].t[b_eid_cpu].to(device)
+                b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+                b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+
+                z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
 
 
-            remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , pos_src, pos_dst)
-            remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
-            remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
+                remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , pos_src, pos_dst)
+                remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
+                remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
 
-            z_m = torch.cat([z_m[remap], z_m[3*bs:]])
-            last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+                z_m = torch.cat([z_m[remap], z_m[3*bs:]])
+                last_update = torch.cat([last_update[remap], last_update[3*bs:]])
 
-            ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , pos_src, pos_dst)
-            updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
-            edge_index = torch.stack([updated_src, edge_index[1,:]])
+                ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , pos_src, pos_dst)
+                updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
+                edge_index = torch.stack([updated_src, edge_index[1,:]])
 
             z = model['gnn'](
                 z_m,
@@ -454,11 +476,15 @@ def test_new(targs, max_seen_id, split_mode):
                 "eval_metric": [metric],
             }
             perf_list.append(evaluator.eval(input_dict)[metric])
-        
-        model['memory'].update_state_v2(
-            mem_graph_quad[2], remap, bs, 
-            pos_src.to(device), pos_dst.to(device), pos_t.to(device), pos_msg.to(device), 
-            n_id, last_update, z_m)        
+        if deliver_to == "neighbor":
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+            store_eid = store_quad[3].cpu()
+            model['memory'].update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
+        else:
+            model['memory'].update_state_v2(
+                mem_graph_quad[2], remap, bs, 
+                pos_src.to(device), pos_dst.to(device), pos_t.to(device), pos_msg.to(device), 
+                n_id, last_update, z_m)        
 
         max_seen_eid += bs
     perf_metrics = float(torch.tensor(perf_list).mean())
@@ -551,4 +577,4 @@ def train_with_custom_neg_sampler(targs):
         # break
 
     # breakpoint()
-    return total_loss/dataset['train_length']
+    return total_loss/dataset['train_length'

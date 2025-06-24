@@ -1459,7 +1459,7 @@ class DAAAPANMemory(torch.nn.Module):
         self._fill_tensor_store(dst, src, t, raw_msg, all_neighbors)
     
 
-    def update_state(self, n_id, z, last_update, store_quad, store_t, store_msg):
+    def update_state_vectorized(self, n_id, z, last_update, store_quad, store_t, store_msg):
         # Step 1: Update memory and last update
         unique_nid, inverse_indices = torch.unique(n_id, return_inverse=True)
         max_vals, max_indices = scatter_max(last_update, inverse_indices, dim=0)
@@ -1498,7 +1498,7 @@ class DAAAPANMemory(torch.nn.Module):
         self.msg_counts[dla_idx] += 1
 
 
-    def update_state_not_vectorized(self, n_id, z, last_update, store_quad, store_t, store_msg):
+    def update_state(self, n_id, z, last_update, store_quad, store_t, store_msg):
         unique_nid, inverse_indices = torch.unique(n_id, return_inverse=True)
         max_vals, max_indices = scatter_max(last_update, inverse_indices, dim=0)
         self.memory[unique_nid] = z[max_indices]
