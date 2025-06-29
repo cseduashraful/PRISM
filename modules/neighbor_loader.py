@@ -83,3 +83,11 @@ class LastNeighborLoader:
     def reset_state(self):
         self.cur_e_id = 0
         self.e_id.fill_(-1)
+
+
+
+def find_neighbor(neighbor_loader, n_id, k=1):
+    for i in range(k-1):
+        n_id, _, _ = neighbor_loader(n_id)
+    neighbor_info = neighbor_loader(n_id)
+    return neighbor_info

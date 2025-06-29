@@ -1429,6 +1429,14 @@ class DAAAPANMemory(torch.nn.Module):
         self.msg_raw.zero_()
         self.msg_counts.zero_()
 
+    def mem_graph(self, od_updated, bs, max_seen_eid):
+        return mem_update_graph.mem_graph_apan(
+            od_updated.to(torch.int64).contiguous(),
+            bs,
+            max_seen_eid
+        )
+
+
     def forward(self, n_id: Tensor, mem_graph, t, raw_msg) -> Tuple[Tensor, Tensor]:
         memory, last_update = self._get_updated_memory(n_id)
         for i in range(self.layer-1):

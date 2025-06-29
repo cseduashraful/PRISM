@@ -16,7 +16,7 @@ from modules.msg_agg import MeanAggregator as Agg
 from modules.neighbor_loader import LastNeighborLoader
 from modules.memory_module import APANMemory
 from modules.train_utils import get_latest_neighbors_per_node
-debug = True
+debug = False
 
 # from apan_train_test_pipeline import train_apan, test_apan
 def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion, device, assoc, min_dst_idx, max_dst_idx):

@@ -79,6 +79,7 @@ def get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id):
     return neigh
 
 def getMem_graph_apan(od_updated, bs, max_seen_eid, device):
+    # breakpoint()
     tmp = od_updated[:,0]%bs
     od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
     od = od_updated[:,:2]
@@ -130,6 +131,148 @@ def getMem_graph_apan(od_updated, bs, max_seen_eid, device):
     store_quad = torch.tensor([msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid]).long().to(device)
     # breakpoint()
     return mem_graph_quad,  store_quad
+
+def getMem_graph_apan_v2(od_updated, bs, max_seen_eid, device):
+    tmp = od_updated[:, 0] % bs
+    od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
+    od = od_updated[:, :2]
+    
+    # Extract unique keys
+    valid_vals = od[od[:, 1] != -1, 1].unique()
+    match_dict = {val.item(): (od_updated[:, 2] == val).nonzero(as_tuple=True)[0] for val in valid_vals}
+
+    ei_src, ei_dst, ei_dla, ei_eid = [], [], [], []
+    msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid = [], [], [], []
+
+    keys = od_updated[:, 1]
+    conds = od_updated[:, 0]
+    bidxs = od_updated[:, 3]
+
+    for i in range(od_updated.shape[0]):
+        key = keys[i].item()
+        cond = conds[i].item()
+        batch_edge_index = bidxs[i].item()
+        if key == -1:
+            continue
+
+        dla = match_dict[key]
+        valid_dla_mask = od_updated[dla, 3] > batch_edge_index
+        valid_dla = dla[valid_dla_mask]
+
+        if valid_dla.shape[0] == 0:
+            msg_store_nid.append(key)
+            msg_store_eid.append(batch_edge_index + max_seen_eid + 1)
+            msg_store_src.append(cond)
+            msg_store_dst.append(cond + bs if cond < bs else cond % bs)
+
+        for j in range(valid_dla.shape[0]):
+            ei_src.append(cond)
+            ei_dst.append(cond + bs if cond < bs else cond % bs)
+            ei_dla.append(valid_dla[j].item())
+            ei_eid.append(batch_edge_index + max_seen_eid + 1)
+
+    mem_graph_quad = torch.tensor([ei_src, ei_dst, ei_dla, ei_eid], device=device, dtype=torch.long)
+    store_quad = torch.tensor([msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid], device=device, dtype=torch.long)
+    
+    return mem_graph_quad, store_quad
+
+# import torch
+import mem_update_graph  # assumes your compiled extension is named this way
+
+def getMem_graph_apan(od_updated: torch.Tensor, bs: int, max_seen_eid: int, device: torch.device):
+    N = od_updated.shape[0]
+    
+    # Append bidx = cond % bs as the 4th column
+    tmp = od_updated[:, 0] % bs
+    od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)  # shape: (N, 4)
+    
+    keys = od_updated[:, 1].long()
+    conds = od_updated[:, 0].long()
+    bidxs = od_updated[:, 3].long()
+
+    # ----------------------------
+    # Build match_dict lookup arrays
+    # ----------------------------
+    valid_keys = keys[keys != -1].unique()
+    match_indices_list = []
+    match_starts = torch.full((keys.max().item() + 2,), -1, dtype=torch.long, device=device)
+    match_ends = torch.full_like(match_starts, -1)
+
+    offset = 0
+    for key in valid_keys:
+        idxs = (od_updated[:, 2] == key).nonzero(as_tuple=True)[0]
+        n = idxs.numel()
+        if n > 0:
+            match_starts[key] = offset
+            match_ends[key] = offset + n
+            match_indices_list.append(idxs)
+            offset += n
+
+    if match_indices_list:
+        match_indices = torch.cat(match_indices_list)
+    else:
+        match_indices = torch.empty(0, dtype=torch.long, device=device)
+
+    # ----------------------------
+    # Allocate output memory (overallocate)
+    # ----------------------------
+    max_out = N * 5
+    ei_src = torch.empty(max_out, dtype=torch.long, device=device)
+    ei_dst = torch.empty_like(ei_src)
+    ei_dla = torch.empty_like(ei_src)
+    ei_eid = torch.empty_like(ei_src)
+
+    msg_store_src = torch.empty(max_out, dtype=torch.long, device=device)
+    msg_store_dst = torch.empty_like(msg_store_src)
+    msg_store_nid = torch.empty_like(msg_store_src)
+    msg_store_eid = torch.empty_like(msg_store_src)
+
+    counter_edge = torch.zeros(1, dtype=torch.long, device=device)
+    counter_store = torch.zeros(1, dtype=torch.long, device=device)
+
+    # ----------------------------
+    # Call the CUDA kernel
+    # ----------------------------
+    mem_update_graph.build_mem_graph(
+        conds,
+        keys,
+        bidxs,
+        od_updated,
+        match_starts,
+        match_ends,
+        match_indices,
+        int(max_seen_eid),
+        int(bs),
+        ei_src,
+        ei_dst,
+        ei_dla,
+        ei_eid,
+        msg_store_src,
+        msg_store_dst,
+        msg_store_nid,
+        msg_store_eid,
+        counter_edge,
+        counter_store
+    )
+
+    # ----------------------------
+    # Slice to actual sizes and return
+    # ----------------------------
+    ei_len = counter_edge.item()
+    store_len = counter_store.item()
+
+    mem_graph_quad = torch.stack([
+        ei_src[:ei_len], ei_dst[:ei_len], ei_dla[:ei_len], ei_eid[:ei_len]
+    ], dim=0)
+
+    store_quad = torch.stack([
+        msg_store_src[:store_len], msg_store_dst[:store_len],
+        msg_store_nid[:store_len], msg_store_eid[:store_len]
+    ], dim=0)
+
+    return mem_graph_quad, store_quad
+
+
 
 
 def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device):
@@ -230,7 +373,27 @@ def train(targs, max_seen_id):
             
             od = torch.cat([ bsrc.T, bdst.T, bndst.T, neighbor_loader.id_to_pair], dim=0)
             od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
+
             mem_graph_quad, store_quad = getMem_graph_apan(od_updated,bs, max_seen_eid, device)
+
+            mem_graph_quad_v2, store_quad_v2 = getMem_graph_apan_v2(od_updated,bs, max_seen_eid, device)
+            # tmp = model['memory'].mem_graph(od_updated,bs, max_seen_eid)
+            # import mem_update_graph  # from the compiled module
+
+            # Call the forward function
+            # mem_graph_out, store_out, mem_counter, store_counter = model['memory'].mem_graph(od_updated,bs, max_seen_eid)
+
+            # Trim output to actual size
+            # mem_graph_quad = mem_graph_out[:, :mem_counter.item()]  # shape: [4, num_edges]
+            # store_quad = store_out[:, :store_counter.item()]   # shape: [4, num_messages]
+
+            breakpoint()
+            mem_graph_quad, store_quad =None, None # model['memory'].mem_graph(od_updated,bs, max_seen_eid)
+
+            if torch.equal(mem_graph_quad, mem_graph_quad_v2) and torch.equal(store_quad, store_quad_v2):
+                print("Same")
+            else:
+                breakpoint()
             # print("Memgraph Constructed")
             # breakpoint()
             b_eid = mem_graph_quad[3]#e_id[bmsk]
@@ -577,4 +740,4 @@ def train_with_custom_neg_sampler(targs):
         # break
 
     # breakpoint()
-    return total_loss/dataset['train_length'
+    return total_loss/dataset['train_length']
