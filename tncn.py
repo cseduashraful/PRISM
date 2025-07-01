@@ -18,13 +18,12 @@ from torch_geometric.loader import TemporalDataLoader
 
 # internal imports
 from tgb.utils.utils import get_args, set_random_seed, save_results
-from tgb.linkproppred.evaluate import Evaluator
 
+from modules.evaluate import Evaluator
 from modules.neighbor_loader import LastNeighborLoader, find_neighbor
 from modules.memory_module import TGNMemory
 from modules.early_stopping import  EarlyStopMonitor
-from tgb.linkproppred.dataset_pyg import PyGLinkPropPredDataset
-
+from modules.dataset_pyg import PyGLinkPropPredDataset
 from modules.NCNDecoder.NCNPred import NCNPredictor
 
 
@@ -223,14 +222,14 @@ TIME_DIM = args.time_dim
 EMB_DIM = args.emb_dim
 TOLERANCE = args.tolerance
 PATIENCE = args.patience
-NUM_RUNS = 1#args.num_run
+NUM_RUNS = args.num_run
 # NUM_NEIGHBORS = 10#args.num_neighbors
 # HOP_NUM = args.hop_num
 # NCN_MODE = args.NCN_mode
 # PER_VAL_EPOCH = args.per_val_epoch
 # device = args.device
 CN_TIME_DECAY = False
-
+MAX_TR_TIME = 48*60*60
 NUM_NEIGHBORS = 10
 HOP_NUM = 2
 NCN_MODE = 2
@@ -239,7 +238,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 args.nei_sampler = 'l'
 args.msg_func = 'identity'
-args.agg_func = 'last'
+args.agg_func = 'mean'
 args.emb_func = 'GraphAttention'
 
 MODEL_NAME = 'TNCN'
@@ -356,13 +355,23 @@ for run_idx in range(NUM_RUNS):
 
     val_perf_list = []
     start_train_val = timeit.default_timer()
+    losses = []
+    tims = []
+    mrrs = []
+    t_tims = 0
     for epoch in range(1, NUM_EPOCH + 1):
         # training
         start_epoch_train = timeit.default_timer()
         loss = train()
+        tim = timeit.default_timer() - start_epoch_train
         print(
             f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
         )
+
+        tims.append(tim)
+        losses.append(loss)
+        t_tims += tim
+
 
         # validation
         if epoch % PER_VAL_EPOCH == 0:
@@ -371,13 +380,20 @@ for run_idx in range(NUM_RUNS):
             print(f"\tValidation {metric}: {perf_metric_val: .4f}, Transductive {metric}: {trans_val: .4f}, Inductive {metric}: {ind_val: .4f}")
             print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
             val_perf_list.append(perf_metric_val)
-
+            mrrs.append(perf_metric_val)
             # check for early stopping
             if early_stopper.step_check(perf_metric_val, model):
+                break
+            if t_tims > MAX_TR_TIME:
                 break
 
     train_val_time = timeit.default_timer() - start_train_val
     print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
+        # print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
+    print("'loss' : ",losses,",")
+    print("'time' : ",tims,",")
+    print("'mrr' : ",mrrs,",")
+
 
     # ==================================================== Test
     # first, load the best model

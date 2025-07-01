@@ -323,8 +323,7 @@ for run_idx in range(NUM_RUNS):
         tims.append(tim)
         losses.append(loss)
         t_tims += tim
-        if t_tims > MAX_TR_TIME:
-            break
+        
 
 
 
@@ -337,6 +336,8 @@ for run_idx in range(NUM_RUNS):
         # val_perf_list.append(perf_metric_val)
 
         # check for early stopping
+        if t_tims > MAX_TR_TIME:
+            break
         if early_stopper.step_check(perf_metric_val, model):
             break
 

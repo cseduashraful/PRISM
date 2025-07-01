@@ -9,6 +9,7 @@ from modules.early_stopping import EarlyStopMonitor
 from modules.msg_agg import LastAggregator, MeanAggregator as Agg, AttentionAggregator, TransformerAggregator
 from modules.msg_func import IdentityMessage, MLPMessage
 from modules.decoder import LinkPredictor
+from modules.NCNDecoder.NCNPred import NCNPredictor
 
 # from torch.optim.lr_scheduler import StepLR
 
@@ -34,6 +35,7 @@ def main():
     custom_parser.add_argument('--debug', type=bool, default=False)
     custom_parser.add_argument('--custom_neg', type=bool, default=False)
     custom_parser.add_argument('--deliver_to', type=str, default='self')
+    custom_parser.add_argument('--decoder', type=str, default='fc')
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -44,6 +46,7 @@ def main():
     args.debug = custom_args.debug
     args.custom_neg = custom_args.custom_neg
     args.deliver_to = custom_args.deliver_to
+    args.decoder = custom_args.decoder
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -68,6 +71,10 @@ def main():
     MAX_TR_TIME = args.mxtt*60*60#12*60*60
     debug = args.debug
     APAN = args.deliver_to == 'neighbor'
+
+    if args.decoder == "NCN":
+        HOP_NUM = 2
+        NCN_MODE = 2
     # ==========
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -145,8 +152,12 @@ def main():
             msg_dim=data.msg.size(-1),
             time_enc=memory.time_enc,
         ).to(device)
-
-        link_pred = LinkPredictor(in_channels=EMB_DIM).to(device)
+        if args.decoder == "NCN":
+            hidden_channels = 256
+            link_pred = NCNPredictor(in_channels=EMB_DIM, hidden_channels=hidden_channels,
+                         out_channels=1, NCN_mode=NCN_MODE).to(device)
+        else:
+            link_pred = LinkPredictor(in_channels=EMB_DIM).to(device)
 
         model = {'memory': memory,
                 'gnn': gnn,
@@ -181,6 +192,7 @@ def main():
             'sampler': sampler,
             'neg_sampler': neg_dest_sampler,
             'deliver_to': args.deliver_to,
+            'decoder': args.decoder,
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()

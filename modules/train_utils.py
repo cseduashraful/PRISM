@@ -342,6 +342,8 @@ def train(targs, max_seen_id):
 
     neg_sampler = targs['neg_sampler']
     deliver_to = targs['deliver_to']
+    decoder = targs['decoder']
+
 
     total_loss = 0
     max_seen_eid = max_seen_id
@@ -364,6 +366,10 @@ def train(targs, max_seen_id):
         root_ts = torch.cat([t, t, t], dim = 0).double()
         root_nodes = torch.cat([src, pos_dst, neg_dst], dim = 0)
         n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+        if decoder == 'NCN':
+            nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+            nid_ts[:root_nodes.shape[0]] = root_ts
+            n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
         # breakpoint()
         if deliver_to == "neighbor":
             # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
@@ -475,9 +481,20 @@ def train(targs, max_seen_id):
                 dataset['data'].msg[e_id].to(device),
             )
             # breakpoint()
-            
-            pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
-            neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+            if decoder == "NCN":
+                # pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                # neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+
+                time_info = (last_update, t)
+                src_re = torch.arange(bs)
+                pos_re = torch.arange(bs, 2*bs)
+                neg_re = torch.arange(2*bs, 3*bs)
+                pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), 2, cn_time_decay=False, time_info=time_info)
+                neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), 2, cn_time_decay=False, time_info=time_info)
+
+            else:
+                pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
 
 
             # breakpoint()
@@ -534,6 +551,7 @@ def test_new(targs, max_seen_id, split_mode):
     metric = dataset['metric']
     evaluator = dataset['evaluator']
     neg_sampler = dataset['neg_sampler']
+    decoder = targs['decoder']
 
 
 
@@ -569,6 +587,10 @@ def test_new(targs, max_seen_id, split_mode):
             root_nodes = torch.cat([pos_src, pos_dst, neg_dst], dim = 0).to(device)
             # breakpoint()
             n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+            if decoder == 'NCN':
+                nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+                nid_ts[:root_nodes.shape[0]] = root_ts
+                n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
 
             # bmsk = e_id>max_seen_eid
             if deliver_to == "neighbor":
@@ -622,11 +644,27 @@ def test_new(targs, max_seen_id, split_mode):
                 dataset['data'].msg[e_id].to(device),
             )
             # breakpoint()
-            if i == 0:
-                pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
-                preds.append(pos_out)
-            neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
-            preds.append(neg_out)
+            
+
+            if decoder == "NCN":
+                # pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                # neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+
+                time_info = (last_update, pos_t)
+                src_re = torch.arange(bs)
+                pos_re = torch.arange(bs, 2*bs)
+                neg_re = torch.arange(2*bs, 3*bs)
+                if i == 0:
+                    pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), 2, cn_time_decay=False, time_info=time_info)
+                    preds.append(pos_out)
+                neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), 2, cn_time_decay=False, time_info=time_info)
+                preds.append(neg_out)
+            else:
+                if i == 0:
+                    pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                    preds.append(pos_out)
+                neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+                preds.append(neg_out)
 
         all_y_preds = torch.cat(preds, dim=1)
         # breakpoint()
