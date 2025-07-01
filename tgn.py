@@ -196,16 +196,16 @@ print("INFO: Arguments:", args)
 LR = args.lr#max(args.lr, (args.lr*args.bs)/200)#args.lr
 BATCH_SIZE = args.bs
 K_VALUE = args.k_value  
-NUM_EPOCH = 1000#args.num_epoch
+NUM_EPOCH = args.num_epoch
 SEED = args.seed
 MEM_DIM = args.mem_dim
 TIME_DIM = args.time_dim
 EMB_DIM = args.emb_dim
 TOLERANCE = args.tolerance
 PATIENCE = args.patience
-NUM_RUNS = 1#args.num_run
+NUM_RUNS = args.num_run
 NUM_NEIGHBORS = 10
-MAX_TR_TIME = 12*60*60
+MAX_TR_TIME = 48*60*60
 
 
 MODEL_NAME = 'TGN'
@@ -308,6 +308,7 @@ for run_idx in range(NUM_RUNS):
     start_train_val = timeit.default_timer()
     losses = []
     tims = []
+    mrrs = []
     t_tims = 0
     for epoch in range(1, NUM_EPOCH + 1):
         # training
@@ -328,52 +329,54 @@ for run_idx in range(NUM_RUNS):
 
 
         # # validation
-        # start_val = timeit.default_timer()
-        # perf_metric_val = test(val_loader, neg_sampler, split_mode="val")
-        # print(f"\tValidation {metric}: {perf_metric_val: .4f}")
-        # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
+        start_val = timeit.default_timer()
+        perf_metric_val = test(val_loader, neg_sampler, split_mode="val")
+        print(f"\tValidation {metric}: {perf_metric_val: .4f}")
+        mrrs.append(perf_metric_val)
+        print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
         # val_perf_list.append(perf_metric_val)
 
-        # # check for early stopping
-        # if early_stopper.step_check(perf_metric_val, model):
-        #     break
+        # check for early stopping
+        if early_stopper.step_check(perf_metric_val, model):
+            break
 
     train_val_time = timeit.default_timer() - start_train_val
     print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
     print("'loss' : ",losses,",")
     print("'time' : ",tims,",")
+    print("'mrr' : ",mrrs,",")
 
 
 
     # ==================================================== Test
     # first, load the best model
-#     early_stopper.load_checkpoint(model)
+    early_stopper.load_checkpoint(model)
 
 #     # loading the test negative samples
-#     dataset.load_test_ns()
+    dataset.load_test_ns()
 
 #     # final testing
-#     start_test = timeit.default_timer()
-#     perf_metric_test = test(test_loader, neg_sampler, split_mode="test")
+    start_test = timeit.default_timer()
+    perf_metric_test = test(test_loader, neg_sampler, split_mode="test")
 
-#     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-#     print(f"\tTest: {metric}: {perf_metric_test: .4f}")
-#     test_time = timeit.default_timer() - start_test
-#     print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
+    print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+    print(f"\tTest: {metric}: {perf_metric_test: .4f}")
+    test_time = timeit.default_timer() - start_test
+    print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
 
-#     save_results({'model': MODEL_NAME,
-#                   'data': DATA,
-#                   'run': run_idx,
-#                   'seed': SEED,
-#                   f'val {metric}': val_perf_list,
-#                   f'test {metric}': perf_metric_test,
-#                   'test_time': test_time,
-#                   'tot_train_val_time': train_val_time
-#                   }, 
-#     results_filename)
+    save_results({'model': MODEL_NAME,
+                  'data': DATA,
+                  'run': run_idx,
+                  'seed': SEED,
+                  f'val {metric}': val_perf_list,
+                  f'test {metric}': perf_metric_test,
+                  'test_time': test_time,
+                  'tot_train_val_time': train_val_time
+                  }, 
+    results_filename)
 
-#     print(f"INFO: >>>>> Run: {run_idx}, elapsed time: {timeit.default_timer() - start_run: .4f} <<<<<")
-#     print('-------------------------------------------------------------------------------')
+    print(f"INFO: >>>>> Run: {run_idx}, elapsed time: {timeit.default_timer() - start_run: .4f} <<<<<")
+    print('-------------------------------------------------------------------------------')
 
-# print(f"Overall Elapsed Time (s): {timeit.default_timer() - start_overall: .4f}")
-# print("==============================================================")
+print(f"Overall Elapsed Time (s): {timeit.default_timer() - start_overall: .4f}")
+print("==============================================================")

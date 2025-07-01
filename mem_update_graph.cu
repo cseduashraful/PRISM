@@ -79,7 +79,7 @@ __global__ void build_mem_graph_kernel(
         int64_t match_bidx = od_updated[idx * 4 + 3];  // od_updated shape: (N, 4)
 
         if (match_bidx > bidx) {
-            int write_idx = atomicAdd(counter_edge, 1);
+            int write_idx = atomicAdd((unsigned long long int*)counter_edge, 1ULL);//atomicAdd(counter_edge, 1);
             ei_src[write_idx] = cond;
             ei_dst[write_idx] = dst;
             ei_dla[write_idx] = idx;
@@ -89,7 +89,7 @@ __global__ void build_mem_graph_kernel(
     }
 
     if (!has_valid) {
-        int store_idx = atomicAdd(counter_store, 1);
+        int store_idx = atomicAdd((unsigned long long int*)counter_store, 1ULL);//atomicAdd(counter_store, 1);
         msg_store_src[store_idx] = cond;
         msg_store_dst[store_idx] = dst;
         msg_store_nid[store_idx] = key;

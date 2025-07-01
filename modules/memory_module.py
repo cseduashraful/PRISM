@@ -14,6 +14,7 @@ from modules.time_enc import TimeEncoder
 # import time
 import mem_update_graph
 from torch_scatter import scatter_max
+from torch_scatter import scatter_add
 
 TGNMessageStoreType = Dict[int, Tuple[Tensor, Tensor, Tensor, Tensor]]
 
@@ -1165,44 +1166,65 @@ class APANMemory(torch.nn.Module):
 
     def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids):
         self._update_memory(n_ids)
-        self._fill_tensor_store(src, dst, t, raw_msg, all_neighbors)
-        self._fill_tensor_store(dst, src, t, raw_msg, all_neighbors)
-    
-    # def _fill_tensor_store(self, src, dst, t, raw_msg, all_neighbors):
-    #     device = src.device
-    #     B = src.size(0)
+        self._fill_tensor_store_new(src, dst, t, raw_msg, all_neighbors)
+        self._fill_tensor_store_new(dst, src, t, raw_msg, all_neighbors)
 
-    #     breakpoint()
-    #     # Build global vectors
-    #     neighbors_list = []
-    #     repeat_index = []
 
-    #     for i in range(B):
-    #         u = src[i].item()
-    #         neighbors = all_neighbors[u]
-    #         neighbors = neighbors[neighbors != u]  # remove self-loop
-    #         neighbors_list.append(neighbors)
-    #         repeat_index.append(torch.full((len(neighbors),), i, dtype=torch.long, device=device))
 
-    #     # Stack all neighbors and gather values accordingly
-    #     all_nbrs = torch.cat(neighbors_list)  # (total_neighbors,)
-    #     src_rep = src[torch.cat(repeat_index)]  # repeat src[i] for all neighbors of src[i]
-    #     dst_rep = dst[torch.cat(repeat_index)]
-    #     t_rep = t[torch.cat(repeat_index)]
-    #     raw_msg_rep = raw_msg[torch.cat(repeat_index)]
-        
-    #     count_vals = self.msg_counts[all_nbrs]
-    #     write_idx = count_vals % self.mailbox_size
+    def _fill_tensor_store_new(self, src, dst, t, raw_msg, all_neighbors):
+        device = src.device
+        B = src.size(0)
 
-    #     # Assign values
-    #     self.msg_src[all_nbrs, write_idx] = src_rep
-    #     self.msg_dst[all_nbrs, write_idx] = dst_rep
-    #     self.msg_t[all_nbrs, write_idx] = t_rep
-    #     self.msg_raw[all_nbrs, write_idx] = raw_msg_rep
-    #     self.msg_dla[all_nbrs, write_idx] = all_nbrs
+        neighbors_list = []
+        repeat_index = []
 
-    #     # Increment counters
-    #     self.msg_counts[all_nbrs] += 1
+        for i in range(B):
+            u = src[i].item()
+            if u >= len(all_neighbors):
+                continue
+
+            neighbors_u = all_neighbors[u]
+            if not isinstance(neighbors_u, torch.Tensor):
+                neighbors_u = torch.tensor(neighbors_u, device=device, dtype=torch.long)
+
+            # skip self-loop
+            neighbors_u = neighbors_u[neighbors_u != u]
+            if neighbors_u.numel() == 0:
+                continue
+
+            neighbors_list.append(neighbors_u)
+            repeat_index.append(torch.full((neighbors_u.numel(),), i, device=device, dtype=torch.long))
+
+        if not neighbors_list:
+            return  # nothing to write
+
+        all_nbrs = torch.cat(neighbors_list)  # All neighbors getting messages
+        idx = torch.cat(repeat_index)         # Source index for each neighbor
+
+        # Compute message data
+        src_rep = src[idx]
+        dst_rep = dst[idx]
+        t_rep = t[idx]
+        raw_msg_rep = raw_msg[idx]
+
+        # Step 1: get current counts
+        counts = self.msg_counts[all_nbrs]
+
+        # Step 2: compute write index (mailbox position)
+        write_idx = counts % self.mailbox_size
+
+        # Step 3: write to mailbox
+        self.msg_src[all_nbrs, write_idx] = src_rep
+        self.msg_dst[all_nbrs, write_idx] = dst_rep
+        self.msg_t[all_nbrs, write_idx] = t_rep
+        self.msg_raw[all_nbrs, write_idx] = raw_msg_rep
+        self.msg_dla[all_nbrs, write_idx] = all_nbrs
+
+        # Step 4: simulate atomic add via scatter_add
+        one_tensor = torch.ones_like(all_nbrs)
+        scatter_add(src=one_tensor, index=all_nbrs, out=self.msg_counts)
+
+
     def _fill_tensor_store(self, src, dst, t, raw_msg, all_neighbors):
         device = src.device
         B = src.size(0)

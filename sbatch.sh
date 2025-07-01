@@ -15,7 +15,8 @@ module load conda/latest
 conda activate pyg
 
 # python apan.py --bs 64
-python main.py --bs 2048 --lr 0.001 --debug False
+# python main.py --bs 2048 --lr 0.001 --debug False
+# python tncn.py --bs 64 --lr 0.0001 #--debug False
 
 # python main.py --data tgbl-review --bs 65536 
 #33331144 256 33331147 512 33331148 1024 33331150 2048 33331181 4096 33331185 8192 33331189 16384 33331245 32768 33331250 65536
@@ -36,4 +37,9 @@ python main.py --bs 2048 --lr 0.001 --debug False
 # python tgn.py --data lastfm --bs 32768
 #33454161 256 33454163 512 33454588 1024 33454591 2048 33454935 4096 33455387 8192 33455792 16384 33456099 32768
 
-# python main.py --data tgbl-wiki --bs 8192 --num_epoch 1 --mxtt 24
+
+
+#6-30-25
+# python main.py --data tgbl-wiki --bs 64 --num_epoch 500 --mxtt 48 --lr 0.001 --num_run 1
+# python main.py --data lastfm --bs 64 --num_epoch 500 --mxtt 48 --lr 0.001 --num_run 1
+# python main.py --data reddit --bs 64 --num_epoch 500 --mxtt 48 --lr 0.001 --num_run 1
