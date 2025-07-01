@@ -230,6 +230,7 @@ NUM_RUNS = args.num_run
 # device = args.device
 CN_TIME_DECAY = False
 MAX_TR_TIME = 48*60*60
+MAX_EXEC_TIME = 72*60*60
 NUM_NEIGHBORS = 10
 HOP_NUM = 2
 NCN_MODE = 2
@@ -359,6 +360,7 @@ for run_idx in range(NUM_RUNS):
     tims = []
     mrrs = []
     t_tims = 0
+    e_tims = 0
     for epoch in range(1, NUM_EPOCH + 1):
         # training
         start_epoch_train = timeit.default_timer()
@@ -385,6 +387,9 @@ for run_idx in range(NUM_RUNS):
             if early_stopper.step_check(perf_metric_val, model):
                 break
             if t_tims > MAX_TR_TIME:
+                break
+            e_tims += timeit.default_timer() - start_epoch_train
+            if e_tims > MAX_EXEC_TIME:
                 break
 
     train_val_time = timeit.default_timer() - start_train_val

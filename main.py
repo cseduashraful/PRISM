@@ -30,7 +30,8 @@ import preprocessor #openmp
 
 def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
-    custom_parser.add_argument('--mxtt', type=int, default=24)
+    custom_parser.add_argument('--mxtt', type=int, default=48)
+    custom_parser.add_argument('--mxet', type=int, default=72)
     custom_parser.add_argument('--debug', type=bool, default=False)
     custom_parser.add_argument('--custom_neg', type=bool, default=False)
     custom_parser.add_argument('--deliver_to', type=str, default='self')
@@ -43,6 +44,7 @@ def main():
     sys.argv = [sys.argv[0]] + remaining_argv
     args, _ = get_args()
     args.mxtt = custom_args.mxtt
+    args.mxet = custom_args.mxet
     args.debug = custom_args.debug
     args.custom_neg = custom_args.custom_neg
     args.deliver_to = custom_args.deliver_to
@@ -70,6 +72,7 @@ def main():
     NUM_NEIGHBORS = K_VALUE
     MODEL_NAME = 'SDA-TGN'
     MAX_TR_TIME = args.mxtt*60*60#12*60*60
+    MAX_EXEC_TIME = args.mxet*60*60
     debug = args.debug
     APAN = args.deliver_to == 'neighbor'
 
@@ -206,6 +209,7 @@ def main():
         losses = []
         tims = []
         t_tims = 0
+        e_tims = 0
         mrrs = []
         for epoch in range(1, NUM_EPOCH + 1):
             # training
@@ -227,9 +231,14 @@ def main():
                 # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
                 val_perf_list.append(perf_metric_val)
                 # check for early stopping
+                
                 if early_stopper.step_check(perf_metric_val, model):
                     break
                 if t_tims > MAX_TR_TIME:
+                    break
+
+                e_tims += timeit.default_timer() - start_epoch_train
+                if e_tims > MAX_EXEC_TIME:
                     break
             
         train_val_time = timeit.default_timer() - start_train_val

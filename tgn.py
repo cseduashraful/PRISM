@@ -206,6 +206,7 @@ PATIENCE = args.patience
 NUM_RUNS = args.num_run
 NUM_NEIGHBORS = 10
 MAX_TR_TIME = 48*60*60
+MAX_EXEC_TIME = 72*60*60
 
 
 MODEL_NAME = 'TGN'
@@ -310,6 +311,7 @@ for run_idx in range(NUM_RUNS):
     tims = []
     mrrs = []
     t_tims = 0
+    e_tims = 0
     for epoch in range(1, NUM_EPOCH + 1):
         # training
         start_epoch_train = timeit.default_timer()
@@ -336,9 +338,13 @@ for run_idx in range(NUM_RUNS):
         # val_perf_list.append(perf_metric_val)
 
         # check for early stopping
+        
+        if early_stopper.step_check(perf_metric_val, model):
+            break
         if t_tims > MAX_TR_TIME:
             break
-        if early_stopper.step_check(perf_metric_val, model):
+        e_tims += timeit.default_timer() - start_epoch_train
+        if e_tims > MAX_EXEC_TIME:
             break
 
     train_val_time = timeit.default_timer() - start_train_val
