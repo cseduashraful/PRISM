@@ -343,6 +343,7 @@ def train(targs, max_seen_id):
     neg_sampler = targs['neg_sampler']
     deliver_to = targs['deliver_to']
     decoder = targs['decoder']
+    embedding = targs['embedding']
 
 
     total_loss = 0
@@ -472,14 +473,22 @@ def train(targs, max_seen_id):
 
             updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
             edge_index = torch.stack([updated_src, edge_index[1,:]])
-
-            z = model['gnn'](
-                z,
-                last_update,
-                edge_index,
-                dataset['data'].t[e_id].to(device),
-                dataset['data'].msg[e_id].to(device),
-            )
+            if embedding == "time_emb":
+                nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+                nid_ts[:root_nodes.shape[0]] = root_ts
+                z = model['gnn'](
+                    z,
+                    last_update,
+                    nid_ts
+                )
+            else:
+                z = model['gnn'](
+                    z,
+                    last_update,
+                    edge_index,
+                    dataset['data'].t[e_id].to(device),
+                    dataset['data'].msg[e_id].to(device),
+                )
             # breakpoint()
             if decoder == "NCN":
                 # pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
@@ -552,6 +561,7 @@ def test_new(targs, max_seen_id, split_mode):
     evaluator = dataset['evaluator']
     neg_sampler = dataset['neg_sampler']
     decoder = targs['decoder']
+    embedding = targs['embedding']
 
 
 
@@ -636,15 +646,30 @@ def test_new(targs, max_seen_id, split_mode):
                 updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
                 edge_index = torch.stack([updated_src, edge_index[1,:]])
 
-            z = model['gnn'](
-                z_m,
-                last_update,
-                edge_index,
-                dataset['data'].t[e_id].to(device),
-                dataset['data'].msg[e_id].to(device),
-            )
+            # z = model['gnn'](
+            #     z_m,
+            #     last_update,
+            #     edge_index,
+            #     dataset['data'].t[e_id].to(device),
+            #     dataset['data'].msg[e_id].to(device),
+            # )
             # breakpoint()
-            
+            if embedding == "time_emb":
+                nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+                nid_ts[:root_nodes.shape[0]] = root_ts
+                z = model['gnn'](
+                    z_m,
+                    last_update,
+                    nid_ts
+                )
+            else:
+                z = model['gnn'](
+                    z_m,
+                    last_update,
+                    edge_index,
+                    dataset['data'].t[e_id].to(device),
+                    dataset['data'].msg[e_id].to(device),
+                )
 
             if decoder == "NCN":
                 # pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])

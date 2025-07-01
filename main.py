@@ -4,7 +4,7 @@ from modules.train_utils import train as actrain, test_new as test, train_with_c
 from modules.memory_module import DAATGNMemory, DAAAPANMemory
 
 from modules.neg_sampler import NegLinkSamplerDest
-from modules.emb_module import GraphAttentionEmbedding
+from modules.emb_module import GraphAttentionEmbedding, TimeEmbedding
 from modules.early_stopping import EarlyStopMonitor
 from modules.msg_agg import LastAggregator, MeanAggregator as Agg, AttentionAggregator, TransformerAggregator
 from modules.msg_func import IdentityMessage, MLPMessage
@@ -26,8 +26,7 @@ import argparse
 
 import preprocessor #openmp
 
-debug = True
-    
+
 
 def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
@@ -36,6 +35,7 @@ def main():
     custom_parser.add_argument('--custom_neg', type=bool, default=False)
     custom_parser.add_argument('--deliver_to', type=str, default='self')
     custom_parser.add_argument('--decoder', type=str, default='fc')
+    custom_parser.add_argument('--embedding', type=str, default='gat')
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -47,6 +47,7 @@ def main():
     args.custom_neg = custom_args.custom_neg
     args.deliver_to = custom_args.deliver_to
     args.decoder = custom_args.decoder
+    args.embedding = custom_args.embedding
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -145,13 +146,18 @@ def main():
                 message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
                 aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
             ).to(device)
-
-        gnn = GraphAttentionEmbedding(
-            in_channels=MEM_DIM,
-            out_channels=EMB_DIM,
-            msg_dim=data.msg.size(-1),
-            time_enc=memory.time_enc,
-        ).to(device)
+        if args.embedding == "time_emb":
+            gnn = TimeEmbedding(
+                in_channels=MEM_DIM,
+                out_channels=EMB_DIM,
+            ).to(device)
+        else:
+            gnn = GraphAttentionEmbedding(
+                in_channels=MEM_DIM,
+                out_channels=EMB_DIM,
+                msg_dim=data.msg.size(-1),
+                time_enc=memory.time_enc,
+            ).to(device)
         if args.decoder == "NCN":
             hidden_channels = 256
             link_pred = NCNPredictor(in_channels=EMB_DIM, hidden_channels=hidden_channels,
@@ -193,6 +199,7 @@ def main():
             'neg_sampler': neg_dest_sampler,
             'deliver_to': args.deliver_to,
             'decoder': args.decoder,
+            'embedding': args.embedding,
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()
