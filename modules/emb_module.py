@@ -13,7 +13,7 @@ class GraphAttentionEmbedding(torch.nn.Module):
         )
 
     def forward(self, x, last_update, edge_index, t, msg):
-        breakpoint()
+        # breakpoint()
         rel_t = last_update[edge_index[0]] - t
         rel_t_enc = self.time_enc(rel_t.to(x.dtype))
         # pdb.set_trace()

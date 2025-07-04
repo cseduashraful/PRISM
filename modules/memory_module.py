@@ -1106,6 +1106,13 @@ class APANMemory(torch.nn.Module):
         self.aggr_module = aggregator_module
         self.time_enc = TimeEncoder(time_dim)
 
+        # self.msg_s_store = {}
+        # self.msg_d_store = {}
+        self.m_counts = torch.zeros(num_nodes, dtype=torch.long, device='cuda:0')
+        self.m_store = torch.full((num_nodes, self.mailbox_size), -1, dtype=torch.long, device='cuda:0')
+        self.m_store_dir = torch.full((num_nodes, self.mailbox_size), False, dtype=torch.bool, device='cuda:0')
+
+
         if memory_updater_cell == "gru":
             self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
         elif memory_updater_cell == "rnn":
@@ -1164,10 +1171,105 @@ class APANMemory(torch.nn.Module):
         memory, last_update = self._get_updated_memory(n_id)
         return memory, last_update
 
-    def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids):
+    def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids, npadded = None, eid_start = 0, assoc = None):
         self._update_memory(n_ids)
-        self._fill_tensor_store_new(src, dst, t, raw_msg, all_neighbors)
-        self._fill_tensor_store_new(dst, src, t, raw_msg, all_neighbors)
+        self._fill_vector_store(src, dst, eid_start, npadded, assoc)
+        self._fill_tensor_store_old(src, dst, t, raw_msg, all_neighbors)
+        self._fill_tensor_store_old(dst, src, t, raw_msg, all_neighbors)
+
+
+    def _fill_vector_store(self, src, dst, eid_start, npadded, assoc):
+        # breakpoint()
+        msg_id = torch.arange(eid_start, eid_start+src.size(0), device=src.device)
+        # self.msg_s_store[]
+        npadded_idx = assoc[src]
+        npadded_idx_dst =  assoc[dst]
+        src_npadded = npadded[npadded_idx]
+        dst_npadded = npadded[npadded_idx_dst]
+
+        msg_id_expanded = msg_id.unsqueeze(1).expand_as(src_npadded)  # (N, K)
+        flat_nodes = src_npadded.flatten()
+        flat_msg_ids = msg_id_expanded.flatten()
+        msg_id_expanded_dst = msg_id.unsqueeze(1).expand_as(dst_npadded)  # (N, K)
+        flat_nodes_dst = dst_npadded.flatten()
+        flat_msg_ids_dst = msg_id_expanded.flatten()
+
+        # Remove -1 entries
+        valid = flat_nodes != -1
+        flat_nodes = flat_nodes[valid]       # (M,)
+        flat_msg_ids = flat_msg_ids[valid]   # (M,)
+        valid_dst = flat_nodes_dst != -1
+        flat_nodes_dst = flat_nodes_dst[valid_dst]       # (M,)
+        flat_msg_ids_dst = flat_msg_ids_dst[valid_dst]   # (M,)
+
+
+
+        # Sort by flat_nodes so we can group
+        sorted_nodes, sort_idx = torch.sort(flat_nodes)
+        sorted_msg_ids = flat_msg_ids[sort_idx]
+        # breakpoint()
+
+        pairs = torch.stack([flat_nodes, flat_msg_ids], dim=1)  # shape: (N, 2)
+        new_pairs = torch.stack([dst, msg_id], dim=1) 
+        pairs = torch.cat([pairs, new_pairs], dim=0)
+        pairs = torch.unique(pairs, dim=0)
+
+        pairs_dst = torch.stack([flat_nodes_dst, flat_msg_ids_dst], dim=1)  # shape: (N, 2)
+        new_pairs_dst = torch.stack([src, msg_id], dim=1) 
+        pairs_dst = torch.cat([pairs_dst, new_pairs_dst], dim=0)
+        pairs_dst = torch.unique(pairs_dst, dim=0)
+        # breakpoint()
+
+        # # Group by node: find boundaries
+        # unique_nodes, counts = torch.unique_consecutive(sorted_nodes, return_counts=True)
+        # msg_store_keys = unique_nodes
+        # msg_store_ptr = torch.cat([torch.tensor([0], device=counts.device), counts.cumsum(0)])  # (num_keys+1,)
+        # msg_store_values = sorted_msg_ids  # flat tensor of all message IDs
+        # breakpoint()
+        sdir = torch.full_like(pairs[:,1], True, dtype=torch.bool)
+        ddir = torch.full_like(pairs_dst[:,1], False, dtype=torch.bool)
+
+        combined_pairs = torch.cat([pairs, pairs_dst], dim=0)
+        combined_dirs = torch.cat([sdir, ddir], dim=0)
+        
+        sorted_vals, sorted_idx = torch.sort(combined_pairs[:, 0] * (combined_pairs[:, 0].max() + 1) + combined_pairs[:, 1])
+        pairs = combined_pairs[sorted_idx]
+        dirs = combined_dirs[sorted_idx]
+        # breakpoint()
+
+
+        node_ids = pairs[:, 0]
+        msg_ids = pairs[:, 1]
+
+        # Step 1: Sort by node_id to group duplicates
+        sorted_vals, sorted_idx = torch.sort(node_ids, stable=True)
+        sorted_nodes = node_ids[sorted_idx]
+        sorted_msgs = msg_ids[sorted_idx]
+        sorted_dirs = dirs[sorted_idx]
+
+        # Step 2: Get per-node insertion offsets
+        # inverse_idx gives the group assignment; counts how many per node
+        unique_nodes, inverse_idx, counts = torch.unique_consecutive(sorted_nodes, return_inverse=True, return_counts=True)
+
+        # How many previous messages each instance has seen within its group
+        intra_offsets = torch.arange(len(sorted_nodes), device=pairs.device) - torch.cumsum(
+            torch.bincount(inverse_idx, minlength=unique_nodes.size(0)), dim=0
+        ).repeat_interleave(counts) + counts.repeat_interleave(counts)
+
+        # Step 3: Compute true write positions in circular buffer
+        # Each node’s global counter (before update)
+        global_start = self.m_counts[sorted_nodes]
+        write_idx = (global_start + intra_offsets) % self.mailbox_size
+
+        # Step 4: Insert messages into store
+        self.m_store[sorted_nodes, write_idx] = sorted_msgs
+        self.m_store_dir[sorted_nodes, write_idx] = sorted_dirs#torch.full_like(sorted_msgs, isSrc, dtype=torch.bool)
+        # breakpoint()
+
+        # Step 5: Update msg_counts per node (add how many were added)
+        # breakpoint()
+        self.m_counts.index_add_(0, unique_nodes, counts)
+        # breakpoint()
 
 
 
