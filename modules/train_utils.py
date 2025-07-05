@@ -3,6 +3,8 @@ import numpy as np
 from tqdm import tqdm
 
 
+
+
 def train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler):
     bs = pos_dst.shape[0]
     if neg_sampler is None:

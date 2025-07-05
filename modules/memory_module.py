@@ -1093,6 +1093,7 @@ class APANMemory(torch.nn.Module):
         memory_updater_cell: str = "gru",
         mailbox_size: int = 10,
         num_head: int = 2,
+        data = None,
     ):
         super().__init__()
 
@@ -1101,6 +1102,7 @@ class APANMemory(torch.nn.Module):
         self.memory_dim = memory_dim
         self.time_dim = time_dim
         self.mailbox_size = mailbox_size
+        self.data = data
 
         self.msg_module = message_module
         self.aggr_module = aggregator_module
@@ -1167,15 +1169,15 @@ class APANMemory(torch.nn.Module):
         self.msg_raw.zero_()
         self.msg_counts.zero_()
 
-    def forward(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
-        memory, last_update = self._get_updated_memory(n_id)
+    def forward(self, n_id: Tensor, data=None) -> Tuple[Tensor, Tensor]:
+        memory, last_update = self._get_updated_memory(n_id, data =  data)
         return memory, last_update
 
-    def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids, npadded = None, eid_start = 0, assoc = None):
-        self._update_memory(n_ids)
+    def update_state(self, src: Tensor, dst: Tensor, t: Tensor, raw_msg: Tensor, all_neighbors, n_ids, npadded = None, eid_start = 0, assoc = None, data = None):
+        self._update_memory(n_ids, data = data)
         self._fill_vector_store(src, dst, eid_start, npadded, assoc)
-        self._fill_tensor_store_old(src, dst, t, raw_msg, all_neighbors)
-        self._fill_tensor_store_old(dst, src, t, raw_msg, all_neighbors)
+        # self._fill_tensor_store_old(src, dst, t, raw_msg, all_neighbors)
+        # self._fill_tensor_store_old(dst, src, t, raw_msg, all_neighbors)
 
 
     def _fill_vector_store(self, src, dst, eid_start, npadded, assoc):
@@ -1396,13 +1398,15 @@ class APANMemory(torch.nn.Module):
                 self.msg_dla[nbr, write_idx] = nbr
                 self.msg_counts[nbr] += 1
 
-    def _update_memory(self, n_id: Tensor):
-        memory, last_update = self._get_updated_memory(n_id)
+    def _update_memory(self, n_id: Tensor, data=None):
+        memory, last_update = self._get_updated_memory(n_id, data=data)
         self.memory[n_id] = memory
         self.last_update[n_id] = last_update
         self.msg_counts[n_id] = 0
 
-    def _get_updated_memory(self, n_id: Tensor) -> Tuple[Tensor, Tensor]:
+    def _get_updated_memory_old(self, n_id: Tensor, data = None) -> Tuple[Tensor, Tensor]:
+        # breakpoint()
+        return self._get_updated_memory(n_id, data)
         self._assoc[n_id] = torch.arange(n_id.size(0), device=n_id.device)
         msg, t, src, dst = self._compute_msg(n_id)
         aggr = self.aggr_module(msg, self._assoc[src], t, n_id.size(0))
@@ -1415,6 +1419,62 @@ class APANMemory(torch.nn.Module):
             # updated_memory = self.memory_updater(aggr, self.memory[n_id])
         last_update = scatter(t, src, 0, self.last_update.size(0), reduce="max")[n_id]
         return updated_memory, last_update
+
+    def _get_updated_memory(self, n_id, data):
+        # breakpoint()
+        if data is not None:
+            eids = self.m_store[n_id].flatten()
+            dirs = self.m_store_dir[n_id].flatten()
+            n_id_flat = n_id.unsqueeze(1).expand(-1, 10).reshape(-1)
+
+            mask = eids != -1
+
+            valid_eids = eids[mask]
+            valid_dirs = dirs[mask]
+            valid_ux = n_id_flat[mask]
+
+            msg = data[valid_eids].to(n_id.device)
+            # Swap where dirs is False
+            lmask = ~valid_dirs  # inverse of dirs (i.e., where it's False)
+            src = torch.where(lmask, msg.dst, msg.src)
+            dst = torch.where(lmask, msg.src, msg.dst)
+            t = msg.t
+            ux = valid_ux
+            raw_msg = msg.msg
+            self.buffer_msg = {
+                'src': src,
+                'dst': dst,
+                't': t,
+                'ux': ux,
+                'raw_msg': raw_msg,
+            }
+        else:
+            src = self.buffer_msg['src']
+            dst = self.buffer_msg['dst']
+            t = self.buffer_msg['t']
+            ux = self.buffer_msg['ux']
+            raw_msg = self.buffer_msg['raw_msg']
+        
+        mask = (t >= 0)
+        src, dst, t, raw_msg, ux = src[mask], dst[mask], t[mask], raw_msg[mask], ux[mask]
+
+        t_rel = t - self.last_update[ux.to(self.last_update.device)]
+        t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
+        msg = self.msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
+        self._assoc[n_id] = torch.arange(n_id.size(0), device=n_id.device)
+        aggr = self.aggr_module(msg, self._assoc[ux], t, n_id.size(0))
+        # updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        if isinstance(self.memory_updater, (GRUCell, RNNCell)):
+            updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        else:
+            x = torch.stack([self.memory[n_id], aggr], dim=1)
+            updated_memory = self.memory_updater(x)
+            # updated_memory = self.memory_updater(aggr, self.memory[n_id])
+        last_update = scatter(t, ux, 0, self.last_update.size(0), reduce="max")[n_id]
+        return updated_memory, last_update
+        
+
+
 
     def _compute_msg(self, n_id: Tensor):
         src = self.msg_src[n_id].flatten()
@@ -1432,9 +1492,9 @@ class APANMemory(torch.nn.Module):
         return msg, t, ux, dst
 
     def train(self, mode: bool = True):
-        if self.training and not mode:
-            self._update_memory(torch.arange(self.num_nodes, device=self.memory.device))
-            self._reset_message_store()
+        # if self.training and not mode:
+        #     self._update_memory(torch.arange(self.num_nodes, device=self.memory.device))
+        #     self._reset_message_store()
         super().train(mode)
 
 

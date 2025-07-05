@@ -136,7 +136,7 @@ def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion,
         neighbors, npadded = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
         assoc[n_id] = torch.arange(n_id.size(0), device=device)
         # breakpoint()
-        z, last_update = model['memory'](n_id)
+        z, last_update = model['memory'](n_id, data=data)
         z = model['gnn'](
             z,
             last_update,
@@ -160,12 +160,12 @@ def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion,
         total_loss += float(loss) * batch.num_events
         max_seen_eid += batch.num_events
 
-    return total_loss / data.num_events
+    return total_loss / train_data.num_events
 
 
 
 @torch.no_grad()
-def test(loader, neg_sampler, split_mode='val'):
+def test(loader, neg_sampler, max_seen_eid, split_mode='val'):
     r"""
     Evaluated the dynamic link prediction
     Evaluation happens as 'one vs. many', meaning that each positive edge is evaluated against many negative edges
@@ -182,6 +182,10 @@ def test(loader, neg_sampler, split_mode='val'):
     model['link_pred'].eval()
 
     perf_list = []
+    
+    # # max_seen_eid = -1
+    # if split_mode != 'val' or split_mode != 'inference':
+    #     max_seen_eid = max_seen_eid + val_data.num_events
 
     for pos_batch in loader:
         pos_src, pos_dst, pos_t, pos_msg = (
@@ -208,7 +212,7 @@ def test(loader, neg_sampler, split_mode='val'):
             assoc[n_id] = torch.arange(n_id.size(0), device=device)
 
             # Get updated memory of all nodes involved in the computation.
-            z, last_update = model['memory'](n_id)
+            z, last_update = model['memory'](n_id, data = data)
             z = model['gnn'](
                 z,
                 last_update,
@@ -229,13 +233,16 @@ def test(loader, neg_sampler, split_mode='val'):
 
         # Update memory and neighbor loader with ground-truth state.
         # model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg)
-        n_id = torch.cat([src, pos_dst]).unique()
+        n_id = torch.cat([pos_src, pos_dst]).unique()
         n_id, edge_index, e_id = neighbor_loader(n_id)
-        neighbors = get_latest_neighbors_per_node(pos_src, pos_dst, pos_t, edge_index, n_id)
-        model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg, neighbors, n_id)
+        assoc[n_id] = torch.arange(n_id.size(0), device=device)
+        neighbors, npadded = get_latest_neighbors_per_node(pos_src, pos_dst, pos_t, edge_index, n_id)
+        model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg, neighbors, n_id, npadded = npadded, eid_start = max_seen_eid+1, assoc = assoc, data=data)
+        # model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg, neighbors, n_id, data = data)
 
 
         neighbor_loader.insert(pos_src, pos_dst)
+        max_seen_eid += pos_batch.num_events
 
 
     perf_metrics = float(torch.tensor(perf_list).mean())
@@ -378,7 +385,7 @@ for run_idx in range(NUM_RUNS):
             
             # # validation
             start_val = timeit.default_timer()
-            perf_metric_val = test(val_loader, neg_sampler, split_mode="val")
+            perf_metric_val = test(val_loader, neg_sampler, train_data.num_events-1, split_mode="val")
             print(f"\tValidation {metric}: {perf_metric_val: .4f}")
             mrrs.append(perf_metric_val)
             print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
@@ -410,7 +417,7 @@ for run_idx in range(NUM_RUNS):
 
 #     # final testing
     start_test = timeit.default_timer()
-    perf_metric_test = test(test_loader, neg_sampler, split_mode="test")
+    perf_metric_test = test(test_loader, neg_sampler,train_data.num_events+val_data.num_events -1 ,split_mode="test")
 
     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
     print(f"\tTest: {metric}: {perf_metric_test: .4f}")
