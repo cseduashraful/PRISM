@@ -1,7 +1,7 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
 from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler
-from modules.memory_module import DAATGNMemory, DAAAPANMemory
+from modules.memory_module import DAATGNMemory, DAAAPANMemory, DA_APANMemory
 
 from modules.neg_sampler import NegLinkSamplerDest
 from modules.emb_module import GraphAttentionEmbedding, TimeEmbedding
@@ -141,7 +141,7 @@ def main():
                 aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
             ).to(device)
         else:
-            memory = DAAAPANMemory(
+            memory = DA_APANMemory(
                 data.num_nodes,
                 data.msg.size(-1),
                 MEM_DIM,

@@ -383,9 +383,9 @@ def train(targs, max_seen_id):
             od = torch.cat([ bsrc.T, bdst.T, bndst.T, neighbor_loader.id_to_pair], dim=0)
             od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
 
-            mem_graph_quad, store_quad = getMem_graph_apan(od_updated,bs, max_seen_eid, device)
+            # mem_graph_quad, store_quad = getMem_graph_apan(od_updated,bs, max_seen_eid, device)
 
-            mem_graph_quad_v2, store_quad_v2 = getMem_graph_apan_v2(od_updated,bs, max_seen_eid, device)
+            mem_graph_quad, store_quad = getMem_graph_apan_v2(od_updated,bs, max_seen_eid, device)
             # tmp = model['memory'].mem_graph(od_updated,bs, max_seen_eid)
             # import mem_update_graph  # from the compiled module
 
@@ -396,13 +396,13 @@ def train(targs, max_seen_id):
             # mem_graph_quad = mem_graph_out[:, :mem_counter.item()]  # shape: [4, num_edges]
             # store_quad = store_out[:, :store_counter.item()]   # shape: [4, num_messages]
 
-            breakpoint()
-            mem_graph_quad, store_quad =None, None # model['memory'].mem_graph(od_updated,bs, max_seen_eid)
+            # breakpoint()
+            # mem_graph_quad, store_quad =None, None # model['memory'].mem_graph(od_updated,bs, max_seen_eid)
 
-            if torch.equal(mem_graph_quad, mem_graph_quad_v2) and torch.equal(store_quad, store_quad_v2):
-                print("Same")
-            else:
-                breakpoint()
+            # if torch.equal(mem_graph_quad, mem_graph_quad_v2) and torch.equal(store_quad, store_quad_v2):
+            #     print("Same")
+            # else:
+            #     breakpoint()
             # print("Memgraph Constructed")
             # breakpoint()
             b_eid = mem_graph_quad[3]#e_id[bmsk]
@@ -410,7 +410,7 @@ def train(targs, max_seen_id):
             # breakpoint()
             b_t = dataset['data'].t[b_eid_cpu].to(device)
             b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
             # breakpoint()
             # print("Updated memory Computed")
             z = model['gnn'](
@@ -434,7 +434,10 @@ def train(targs, max_seen_id):
             optimizer.step()
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             store_eid = store_quad[3].cpu()
-            model['memory'].update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
+            # breakpoint()
+            dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
+            
+            model['memory'].update_state(n_id, z, last_update, store_quad, dirs.to(device))
             # print("State Updated")
             model['memory'].detach()
             total_loss += float(loss) * batch.num_events
