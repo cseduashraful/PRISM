@@ -143,12 +143,14 @@ def getMem_graph_apan_v2(od_updated, bs, max_seen_eid, device):
     valid_vals = od[od[:, 1] != -1, 1].unique()
     match_dict = {val.item(): (od_updated[:, 2] == val).nonzero(as_tuple=True)[0] for val in valid_vals}
 
-    ei_src, ei_dst, ei_dla, ei_eid = [], [], [], []
+ 
+    e_src, e_dst, e_dla, e_eid = [], [], [], []
     msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid = [], [], [], []
 
     keys = od_updated[:, 1]
     conds = od_updated[:, 0]
     bidxs = od_updated[:, 3]
+    # breakpoint()
 
     for i in range(od_updated.shape[0]):
         key = keys[i].item()
@@ -166,20 +168,33 @@ def getMem_graph_apan_v2(od_updated, bs, max_seen_eid, device):
             msg_store_eid.append(batch_edge_index + max_seen_eid + 1)
             msg_store_src.append(cond)
             msg_store_dst.append(cond + bs if cond < bs else cond % bs)
+        n = valid_dla.shape[0]
+        ei_src_l = torch.full((n,), cond, device=valid_dla.device)
+        ei_dst_l = torch.full((n,), cond + bs if cond < bs else cond % bs, device=valid_dla.device)
+        ei_dla_l = valid_dla
+        ei_eid_l = torch.full((n,), batch_edge_index + max_seen_eid + 1, device=valid_dla.device)
+        e_src.append(ei_src_l)
+        e_dst.append(ei_dst_l)
+        e_dla.append(ei_dla_l)
+        e_eid.append(ei_eid_l)
 
-        for j in range(valid_dla.shape[0]):
-            ei_src.append(cond)
-            ei_dst.append(cond + bs if cond < bs else cond % bs)
-            ei_dla.append(valid_dla[j].item())
-            ei_eid.append(batch_edge_index + max_seen_eid + 1)
+    # breakpoint()
+    e_src = torch.cat(e_src) 
+    e_dst = torch.cat(e_dst)
+    e_dla = torch.cat(e_dla)
+    e_eid = torch.cat(e_eid)
+    # breakpoint()
+    mem_graph_quad = torch.stack([e_src, e_dst, e_dla, e_eid])
+    # mem_graph_quad = torch.tensor([ei_src, ei_dst, ei_dla, ei_eid], device=device, dtype=torch.long)
+    # if torch.equal(tensor1, tensor2)
+    # breakpoint()
 
-    mem_graph_quad = torch.tensor([ei_src, ei_dst, ei_dla, ei_eid], device=device, dtype=torch.long)
     store_quad = torch.tensor([msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid], device=device, dtype=torch.long)
     
     return mem_graph_quad, store_quad
 
 # import torch
-import mem_update_graph  # assumes your compiled extension is named this way
+import mem_update_graph  
 
 def getMem_graph_apan(od_updated: torch.Tensor, bs: int, max_seen_eid: int, device: torch.device):
     N = od_updated.shape[0]
