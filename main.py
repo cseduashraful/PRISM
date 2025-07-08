@@ -37,6 +37,7 @@ def main():
     custom_parser.add_argument('--deliver_to', type=str, default='self')
     custom_parser.add_argument('--decoder', type=str, default='fc')
     custom_parser.add_argument('--embedding', type=str, default='gat')
+    custom_parser.add_argument('--val_neg', type=int, default=-1)
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -50,6 +51,7 @@ def main():
     args.deliver_to = custom_args.deliver_to
     args.decoder = custom_args.decoder
     args.embedding = custom_args.embedding
+    args.val_neg = custom_args.val_neg
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -203,6 +205,7 @@ def main():
             'deliver_to': args.deliver_to,
             'decoder': args.decoder,
             'embedding': args.embedding,
+            'val_neg': args.val_neg,
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()

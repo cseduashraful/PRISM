@@ -608,6 +608,7 @@ def test_new(targs, max_seen_id, split_mode):
     neg_sampler = dataset['neg_sampler']
     decoder = targs['decoder']
     embedding = targs['embedding']
+    val_neg = targs['val_neg']
 
 
 
@@ -633,6 +634,10 @@ def test_new(targs, max_seen_id, split_mode):
         neg_batch_tensor = torch.tensor([inner[:min_len] for inner in neg_batch_list])
         neg_batch_tensor_T = neg_batch_tensor.T
         # print()
+        # breakpoint()
+        if split_mode == "val" and val_neg > -1:
+            idx = torch.randperm(neg_batch_tensor_T.size(0))[:5]
+            neg_batch_tensor_T = neg_batch_tensor_T[idx]
         num_neg = neg_batch_tensor_T.shape[0]
         bs = pos_src.shape[0]
         preds = []
