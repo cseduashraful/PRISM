@@ -1669,6 +1669,9 @@ class DA_APANMemory(torch.nn.Module):
         self.m_counts[n_ids] = 0
         self._fill_vector_store(src, dst, eid_start, npadded, assoc)
 
+
+    # (n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
+
     def update_state(self, n_id, z, last_update, store_quad, dirs):
         unique_nid, inverse_indices = torch.unique(n_id, return_inverse=True)
         max_vals, max_indices = scatter_max(last_update, inverse_indices, dim=0)

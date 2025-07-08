@@ -472,6 +472,7 @@ def train(targs, max_seen_id):
             # print("batch loss computed")
             loss.backward()
             optimizer.step()
+
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             store_eid = store_quad[3].cpu()
             # breakpoint()
@@ -668,7 +669,7 @@ def test_new(targs, max_seen_id, split_mode):
                 # breakpoint()
                 b_t = dataset['data'].t[b_eid_cpu].to(device)
                 b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data=dataset['data'])
                 
             else:
 
@@ -751,9 +752,33 @@ def test_new(targs, max_seen_id, split_mode):
             }
             perf_list.append(evaluator.eval(input_dict)[metric])
         if deliver_to == "neighbor":
-            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+            root_ts = torch.cat([pos_t, pos_t], dim = 0).double().to(device)
+            root_nodes = torch.cat([pos_src, pos_dst], dim = 0).to(device)
+            n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+
+            bsrc = torch.stack([torch.arange(pos_src.shape[0]).to(device), pos_dst.to(device)])
+            bdst = torch.stack([torch.arange(pos_src.shape[0], 2*pos_src.shape[0]).to(device), pos_src.to(device)])
+            # bndst = torch.stack([torch.arange(2*pos_src.shape[0], 3*pos_src.shape[0]).to(device), torch.full((pos_src.shape[0],), -1).to(device)])
+            
+            od = torch.cat([ bsrc.T, bdst.T, neighbor_loader.id_to_pair], dim=0)
+            od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
+            tmp = od_updated[:, 0] % bs
+            od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
+            mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated,bs, max_seen_eid)
+
+            b_eid = mem_graph_quad[3]#e_id[bmsk]
+            b_eid_cpu = b_eid.cpu()
+                # breakpoint()
+            b_t = dataset['data'].t[b_eid_cpu].to(device)
+            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+
+            # breakpoint()
+            # n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
             store_eid = store_quad[3].cpu()
-            model['memory'].update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
+            dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
+            model['memory'].update_state(n_id, z, last_update, store_quad, dirs.to(device))
+            # update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
         else:
             model['memory'].update_state_v2(
                 mem_graph_quad[2], remap, bs, 
