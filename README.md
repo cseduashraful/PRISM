@@ -1,48 +1,66 @@
-# Recent-K Sampler
+# SDaTGNN: Scalable Dependency-Aware Temporal GNN Framework
 
-Fast GPU-friendly sampler for temporal graph learning.
+**SDaTGNN** is a fast and memory-efficient framework for temporal graph learning. It supports large-batch training with multi-version memory updates and dependency-aware message passing.
 
-Features:
-- CUDA-accelerated neighbor finding
-- OpenMP C++ preprocessing
-- Chunk-based efficient memory handling
-- Chronologically optimized batch sampling
+---
 
+## 🔧 Key Components
 
-# Address Intra-batch Temporal Discontinuity using Aggregation
+### ✅ Recent-K Sampler
 
-Multi-version memory management
+A GPU-accelerated temporal sampler optimized for fast and scalable training on dynamic graphs.
 
-Features:
-- CUDA accelerated memory-update graph generation
-- approximate dependency-aware multi-version intra-batch memory
-- k-layer memory update module to push approximation k-hop away
+**Features:**
+- CUDA-accelerated neighbor finding  
+- OpenMP-based C++ preprocessing  
+- Chunked, memory-efficient sampling  
+- Chronologically optimized batch construction  
 
+### ✅ Intra-Batch Temporal Discontinuity Handling
 
-To build the prepocessor, mem_graph generator and sampler
+Mitigates stale memory problems within large batches using dependency-aware approximation.
 
-    python setup.py build_ext --inplace
+**Features:**
+- CUDA-accelerated memory update graph generation  
+- Approximate multi-version intra-batch memory  
+- k-hop propagation to push approximation errors away  
+- Scalable k-layer memory update module  
 
+---
 
-We built the Sampler on cuda 11.8
+## ⚙️ Build Instructions
 
-#How to run
-Main script: main.py
+To compile the custom C++ and CUDA extensions:
 
-Args:
- -- data: supported link prediction datasets: tgbl-wiki, reddit, mooc, etc., default: tgbl-wiki
- -- bs: batch size
- --lr: learning rate
- -- -- Same as tgb
+```bash
+python setup.py build_ext --inplace
+```
 
-Custom Args:
- custom_parser.add_argument('--mxtt', type=int, default=48) # maximum training time in hours
-    custom_parser.add_argument('--mxet', type=int, default=72) # maximum execution time (training+validation) in hours
-    custom_parser.add_argument('--debug', type=bool, default=False) # debug true disables validation
-    custom_parser.add_argument('--custom_neg', type=bool, default=False) #in order to use custom negative sampler, #not implemented yet
-    custom_parser.add_argument('--deliver_to', type=str, default='self') #deliver_to self for tgn, tncn and jodie, deliver_to neighbor for apan
-    custom_parser.add_argument('--decoder', type=str, default='fc') #decoder fc for tgn, apan, jodie, decoder NCN for tncn
-    custom_parser.add_argument('--embedding', type=str, default='gat') #embedding gat for tgn, apan, tncn, embedding time_emb for jodie
-    custom_parser.add_argument('--val_neg', type=int, default=-1) #number of negative samples to consider during validation. -1 means all available negative samples in the file. (test always uses -1)
- 
- 
+## 🚀 Running the Code
+
+The main training and evaluation script is:
+```bash
+python main.py
+```
+
+✅ Example
+
+```bash
+python main.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
+```
+
+## 🧾 Argument Descriptions
+
+| Argument       | Description                                                                              |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| `--data`       | Dataset name. Supported: `tgbl-wiki`, `reddit`, `mooc`, etc. *(Default: tgbl-wiki)*      |
+| `--bs`         | Batch size                                                                               |
+| `--lr`         | Learning rate                                                                            |
+| `--mxtt`       | Max training time in hours *(Default: 48)*                                               |
+| `--mxet`       | Max total execution time (train + val) in hours *(Default: 72)*                          |
+| `--debug`      | If true, disables validation *(Default: False)*                                          |
+| `--custom_neg` | Use custom negative sampler *(Not implemented yet)*                                      |
+| `--deliver_to` | Memory delivery target: `self` (TGN, TNCN, Jodie) or `neighbor` (APAN) *(Default: self)* |
+| `--decoder`    | Decoder type: `fc` (TGN, APAN, Jodie) or `NCN` (TNCN) *(Default: fc)*                    |
+| `--embedding`  | Embedding type: `gat` (TGN, APAN, TNCN) or `time_emb` (Jodie) *(Default: gat)*           |
+| `--val_neg`    | Number of negatives during validation. `-1` means use all available. *(Default: -1)*     |
