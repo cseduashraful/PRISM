@@ -1564,6 +1564,42 @@ class DA_APANMemory(torch.nn.Module):
         # self.msg_dla = torch.full((self.num_nodes, self.mailbox_size), -1, dtype=torch.long, device=device)
         # self.msg_raw = torch.zeros((self.num_nodes, self.mailbox_size, self.raw_msg_dim), device=device)
         # self.msg_counts = torch.zeros(self.num_nodes, dtype=torch.long, device=device)
+    # def mem_graph(self, ei_src, ei_dst, pos_node_s, pos_node_d):
+    #     batch_size = pos_node_s.size(0)
+    #     return mem_update_graph.apan_mem_graph(
+    #         ei_src.to(torch.int64).contiguous(),
+    #         ei_dst.to(torch.int64).contiguous(),
+    #         pos_node_s.to(torch.int64).contiguous(),
+    #         pos_node_d.to(torch.int64).contiguous(),
+    #         batch_size
+    #     )
+    def mem_graph(self, od_updated, bs, max_seen_eid):
+        tmp = od_updated[:, 0] % bs
+        od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
+        N = od_updated.size(0)
+
+        # Estimate maximum possible sizes (same as N)
+        mem_quad = torch.zeros((4, N), dtype=torch.long, device=od_updated.device)
+        store_quad = torch.zeros((4, N), dtype=torch.long, device=od_updated.device)
+
+        mem_counter = torch.zeros(1, dtype=torch.int32, device=od_updated.device)
+        store_counter = torch.zeros(1, dtype=torch.int32, device=od_updated.device)
+
+        #.to(torch.int64).contiguous()
+        mem_update_graph.apan_mem_graph(
+            od_updated.contiguous(),
+            mem_quad,
+            store_quad,
+            bs,
+            max_seen_eid,
+            mem_counter,
+            store_counter
+        )
+
+        mem_quad_trimmed = mem_quad[:, :mem_counter.item()]
+        store_quad_trimmed = store_quad[:, :store_counter.item()]
+
+        return mem_quad_trimmed, store_quad_trimmed
 
     def reset_parameters(self):
         if hasattr(self.msg_module, "reset_parameters"):
@@ -1596,6 +1632,9 @@ class DA_APANMemory(torch.nn.Module):
     
     def forward(self, n_id: Tensor, mem_graph, t, raw_msg, data=None) -> Tuple[Tensor, Tensor]:
         memory, last_update = self._get_updated_memory(n_id, data = data)
+        if mem_graph[0].size(0) == 0:
+            # breakpoint()
+            return memory, last_update
         for i in range(self.layer-1):
             memory, last_update = self._apply_intra_batch_info(mem_graph, n_id, t, raw_msg, memory)
         return  self._apply_intra_batch_info(mem_graph, n_id, t, raw_msg, memory)

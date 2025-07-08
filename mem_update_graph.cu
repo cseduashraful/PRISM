@@ -177,9 +177,103 @@ void build_mem_graph_cuda(
     cudaDeviceSynchronize();  // Optional: debugging
 }
 
+/////APAN Start
+// #include <torch/extension.h>
+// #include <cuda.h>
+// #include <cuda_runtime.h>
+
+__global__ void build_mem_graph_apan_kernel(
+    const int64_t* __restrict__ od_data,          // [num_rows * 5]
+    const int64_t* __restrict__ match_ptr,        // [num_keys + 1]
+    const int64_t* __restrict__ match_indices,    // flattened match index list
+    int64_t num_rows,
+    int64_t bs,
+    int64_t max_seen_eid,
+    int64_t* __restrict__ mem_graph_out,          // [4, max_edges]
+    int64_t* __restrict__ store_quad_out,         // [4, max_msgs]
+    // int64_t* __restrict__ edge_counter,
+    // int64_t* __restrict__ msg_counter
+    int32_t* __restrict__ edge_counter,
+    int32_t* __restrict__ msg_counter
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= num_rows) return;
+
+    int64_t cond = od_data[tid * 5 + 0];
+    int64_t key  = od_data[tid * 5 + 1];
+    int64_t bidx = od_data[tid * 5 + 3];
+
+    if (key == -1) return;
+
+    int64_t eid_val = bidx + max_seen_eid + 1;
+    int64_t dst_val = (cond < bs) ? cond + bs : cond % bs;
+
+    int64_t start = match_ptr[key];
+    int64_t end   = match_ptr[key + 1];
+
+    bool has_valid = false;
+    for (int64_t j = start; j < end; ++j) {
+        int64_t idx = match_indices[j];
+        int64_t other_bidx = od_data[idx * 5 + 3];
+        if (other_bidx > bidx) {
+            int pos = atomicAdd(edge_counter, 1);
+
+            mem_graph_out[pos + 0 * num_rows] = cond;
+            mem_graph_out[pos + 1 * num_rows] = dst_val;
+            mem_graph_out[pos + 2 * num_rows] = idx;
+            mem_graph_out[pos + 3 * num_rows] = eid_val;
+
+            has_valid = true;
+        }
+    }
+
+    if (!has_valid) {
+        int pos = atomicAdd(msg_counter, 1);
+
+        store_quad_out[pos + 0 * num_rows] = cond;
+        store_quad_out[pos + 1 * num_rows] = dst_val;
+        store_quad_out[pos + 2 * num_rows] = key;
+        store_quad_out[pos + 3 * num_rows] = eid_val;
+    }
+}
+
+
+
+// Forward declaration for PyBind
+void launch_build_mem_graph_apan_kernel(
+    at::Tensor od_data,
+    at::Tensor match_ptr,
+    at::Tensor match_indices,
+    int64_t bs,
+    int64_t max_seen_eid,
+    at::Tensor mem_graph_out,
+    at::Tensor store_quad_out,
+    at::Tensor edge_counter,
+    at::Tensor msg_counter
+) {
+    const int num_rows = od_data.size(0);
+    const int threads = 256;
+    const int blocks = (num_rows + threads - 1) / threads;
+
+    build_mem_graph_apan_kernel<<<blocks, threads>>>(
+        od_data.data_ptr<int64_t>(),
+        match_ptr.data_ptr<int64_t>(),
+        match_indices.data_ptr<int64_t>(),
+        num_rows,
+        bs,
+        max_seen_eid,
+        mem_graph_out.data_ptr<int64_t>(),
+        store_quad_out.data_ptr<int64_t>(),
+        edge_counter.data_ptr<int>(),
+        msg_counter.data_ptr<int>()
+    );
+}
+
+/////APAN End
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("mem_graph", &recent_index_cuda, "Recent index CUDA for mem update graph");
-    m.def("build_mem_graph", &build_mem_graph_cuda, "Build memory graph edges and store entries");
+    // m.def("build_mem_graph", &build_mem_graph_cuda, "Build memory graph edges and store entries");
+    m.def("apan_mem_graph", &launch_build_mem_graph_apan_kernel, "Recent index CUDA for mem update graph");
 
 }
