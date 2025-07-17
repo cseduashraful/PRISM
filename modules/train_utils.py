@@ -145,6 +145,7 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
     keys = od_updated[:, 1]
     match_vals = od_updated[:, 2]
     bidxs = od_updated[:, 3]
+    # breakpoint()
     
     valid_mask = keys != -1
     valid_indices = valid_mask.nonzero(as_tuple=False).squeeze()
@@ -154,29 +155,80 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
     match_vals_all = match_vals.unsqueeze(0)  # shape: [1, N]
     key_vals_all = valid_keys.unsqueeze(1)    # shape: [M, 1]
 
+
+
+    # kept_i_valid, kept_i_match = mem_update_graph.find_matches(
+    #     valid_keys, valid_bidxs, valid_indices, match_vals, bidxs
+    # )
+
+
+    # kept_i_valid, kept_i_match = mem_update_graph.find_matches(valid_keys, valid_bidxs, match_vals, bidxs)
+    # breakpoint()
     # Compare every valid key to all match_vals
-    match_mask = (match_vals_all == key_vals_all)  # shape: [M, N]
+    # breakpoint()
+    chunk_size = 16384
+    start = 0
+    kv_list = []
+    km_list = []
+    while start < key_vals_all.shape[0]:
+        end = min(start+chunk_size, key_vals_all.shape[0])
+        partial_key = key_vals_all[start:end,]
+        partial_match_mask = (match_vals_all == partial_key)
+        partial_dla_indices_per_row = partial_match_mask.nonzero(as_tuple=False)
+        partial_i_valid = partial_dla_indices_per_row[:, 0] + start  # which row in valid_keys
+        partial_i_match = partial_dla_indices_per_row[:, 1]  # which match index
+        partial_ref_bidxs = valid_bidxs[partial_i_valid]
+        partial_match_bidxs = bidxs[partial_i_match]
+        partial_keep_mask = partial_match_bidxs > partial_ref_bidxs
+        partial_kept_i_valid = partial_i_valid[partial_keep_mask]
+        partial_kept_i_match = partial_i_match[partial_keep_mask]
+        kv_list.append(partial_kept_i_valid)
+        km_list.append(partial_kept_i_match)
+        start = end
 
-    # Get dla indices per valid row
-    dla_indices_per_row = match_mask.nonzero(as_tuple=False)  # shape: [*, 2], [i_valid, match_idx]
-    i_valid = dla_indices_per_row[:, 0]  # which row in valid_keys
-    i_match = dla_indices_per_row[:, 1]  # which match index
+    # match_mask = (match_vals_all == key_vals_all)  # shape: [M, N]
 
-    # Get the bidxs to compare against
-    ref_bidxs = valid_bidxs[i_valid]     # shape: [*,]
+    # # breakpoint()
+    # # Get dla indices per valid row
+    # dla_indices_per_row = match_mask.nonzero(as_tuple=False)  # shape: [*, 2], [i_valid, match_idx]
+    # i_valid = dla_indices_per_row[:, 0]  # which row in valid_keys
+    # i_match = dla_indices_per_row[:, 1]  # which match index
 
-    # Now get bidxs for the matched rows
-    match_bidxs = bidxs[i_match]         # shape: [*,]
+    # # key_vals_all_f = key_vals_all.flatten()
+    # # match_vals_all_f = match_vals_all.flatten()
 
-    # Keep only where match_bidx > ref_bidx
-    keep_mask = match_bidxs > ref_bidxs
-    kept_i_valid = i_valid[keep_mask]
-    kept_i_match = i_match[keep_mask]
+    # # i_valid_new, match_idx = mem_update_graph.match_indices(key_vals_all_f, match_vals_all_f, 100000)
+    
+    # # breakpoint()
+
+    # # Get the bidxs to compare against
+    # ref_bidxs = valid_bidxs[i_valid]     # shape: [*,]
+
+    # # Now get bidxs for the matched rows
+    # match_bidxs = bidxs[i_match]         # shape: [*,]
+
+    # # Keep only where match_bidx > ref_bidx
+    # keep_mask = match_bidxs > ref_bidxs
+
+
+    # kept_i_valid_2 = i_valid[keep_mask]
+    # kept_i_match_2 = i_match[keep_mask]
+
+    kept_i_valid = torch.cat(kv_list, dim=0)
+    kept_i_match = torch.cat(km_list, dim=0)
+
+    # if(torch.equal(kept_i_match_2, kept_i_match)) and torch.equal(kept_i_valid, kept_i_valid_2):
+    #     print("Same")
+    # else:
+    #     print("different")
+
+ 
+
 
     # breakpoint()
     M = valid_keys.size(0)
     has_valid_dla = torch.zeros(M, dtype=torch.bool, device=od_updated.device)
-    has_valid_dla.index_fill_(0, i_valid[keep_mask], True)
+    has_valid_dla.index_fill_(0, kept_i_valid, True)
 
     no_dla_mask = ~has_valid_dla
     no_dla_indices = valid_indices[no_dla_mask]  # original od_updated row indices
