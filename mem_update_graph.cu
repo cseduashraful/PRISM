@@ -271,9 +271,98 @@ void launch_build_mem_graph_apan_kernel(
 
 /////APAN End
 
+
+
+
+__global__ void find_matches_kernel(
+    const int64_t* __restrict__ key_vals_all,  // [M]
+    const int64_t* __restrict__ match_vals_all,  // [N]
+    int64_t* out_i_valid,  // [MAX_MATCHES]
+    int64_t* out_match_idx,  // [MAX_MATCHES]
+    int64_t* match_count,  // single int64_t counter (on device, use atomicAdd)
+    int M, int N
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= M) return;
+
+    int64_t key = key_vals_all[tid];
+    for (int j = 0; j < N; ++j) {
+        if (key == match_vals_all[j]) {
+            // int idx = atomicAdd(match_count, 1);
+            // long long int idx = atomicAdd((long long int*)match_count, 1);
+            // long long int idx = atomicAdd((long long int*)match_count, (long long int)1);
+            unsigned long long int idx = atomicAdd(reinterpret_cast<unsigned long long int*>(match_count), 1ULL);
+
+
+            out_i_valid[idx] = tid;
+            out_match_idx[idx] = j;
+        }
+    }
+}
+
+void launch_match_kernel(
+    torch::Tensor key_vals_all,
+    torch::Tensor match_vals_all,
+    torch::Tensor out_i_valid,
+    torch::Tensor out_match_idx,
+    torch::Tensor match_count) {
+
+    const int M = key_vals_all.size(0);
+    const int N = match_vals_all.size(0);
+
+    const int threads = 256;
+    const int blocks = (M + threads - 1) / threads;
+
+    find_matches_kernel<<<blocks, threads>>>(
+        key_vals_all.data_ptr<int64_t>(),
+        match_vals_all.data_ptr<int64_t>(),
+        out_i_valid.data_ptr<int64_t>(),
+        out_match_idx.data_ptr<int64_t>(),
+        match_count.data_ptr<int64_t>(),
+        M, N
+    );
+}
+
+
+
+std::vector<torch::Tensor> match_indices(
+    torch::Tensor key_vals_all,
+    torch::Tensor match_vals_all,
+    int64_t max_matches) {
+
+    auto options = key_vals_all.options().dtype(torch::kInt64);
+    auto out_i_valid = torch::empty({max_matches}, options);
+    auto out_match_idx = torch::empty({max_matches}, options);
+    auto match_count = torch::zeros({1}, options.device(key_vals_all.device()));
+
+    launch_match_kernel(key_vals_all, match_vals_all, out_i_valid, out_match_idx, match_count);
+
+    auto actual_count = match_count.item<int64_t>();
+    return {
+        out_i_valid.slice(0, 0, actual_count),
+        out_match_idx.slice(0, 0, actual_count)
+    };
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("mem_graph", &recent_index_cuda, "Recent index CUDA for mem update graph");
+    m.def("match_indices", &match_indices, "Efficient matching indices (CUDA)");
+    // m.def("find_matches", &find_matches, "find matches kernel for apan");
     // m.def("build_mem_graph", &build_mem_graph_cuda, "Build memory graph edges and store entries");
-    m.def("apan_mem_graph", &launch_build_mem_graph_apan_kernel, "Recent index CUDA for mem update graph");
+    // m.def("apan_mem_graph", &launch_build_mem_graph_apan_kernel, "Recent index CUDA for mem update graph");
 
 }
