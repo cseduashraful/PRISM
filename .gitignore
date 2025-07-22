@@ -17,3 +17,4 @@ runs/
 *.npy
 build/
 *.so
+sbatch.sh
