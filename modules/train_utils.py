@@ -81,46 +81,46 @@ def get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id):
     return neigh
 
 
-def apan_cuda_launcher(od_updated, bs, max_seen_eid, match_dict, device):
-    match_ptr = [0]
-    match_indices = []
-    max_key = max(match_dict.keys())
-    for k in range(max_key + 1):
-        match_list = match_dict.get(k, [])
-        match_indices.extend(match_list)
-        match_ptr.append(len(match_indices))
-    breakpoint()
-    match_ptr = torch.tensor(match_ptr, device=device, dtype=torch.long)
-    match_indices = torch.tensor(match_indices, device=device, dtype=torch.long)
+# def apan_cuda_launcher(od_updated, bs, max_seen_eid, match_dict, device):
+#     match_ptr = [0]
+#     match_indices = []
+#     max_key = max(match_dict.keys())
+#     for k in range(max_key + 1):
+#         match_list = match_dict.get(k, [])
+#         match_indices.extend(match_list)
+#         match_ptr.append(len(match_indices))
+#     breakpoint()
+#     match_ptr = torch.tensor(match_ptr, device=device, dtype=torch.long)
+#     match_indices = torch.tensor(match_indices, device=device, dtype=torch.long)
 
-    threads_per_block = 256
-    blocks = (od_updated.size(0) + threads_per_block - 1) // threads_per_block
+#     threads_per_block = 256
+#     blocks = (od_updated.size(0) + threads_per_block - 1) // threads_per_block
 
-    max_edges = od_updated.size(0) * 10
-    mem_graph_out = torch.zeros((4, max_edges), dtype=torch.long, device=device)
-    store_quad_out = torch.zeros((4, od_updated.size(0)), dtype=torch.long, device=device)
-    edge_counter = torch.zeros(1, dtype=torch.int32, device=device)
-    msg_counter = torch.zeros(1, dtype=torch.int32, device=device)
+#     max_edges = od_updated.size(0) * 10
+#     mem_graph_out = torch.zeros((4, max_edges), dtype=torch.long, device=device)
+#     store_quad_out = torch.zeros((4, od_updated.size(0)), dtype=torch.long, device=device)
+#     edge_counter = torch.zeros(1, dtype=torch.int32, device=device)
+#     msg_counter = torch.zeros(1, dtype=torch.int32, device=device)
 
 
-    mem_update_graph.apan_mem_graph(
-        od_updated.contiguous(),  # arg0: torch.Tensor [N, 5]
-        match_ptr,                # arg1
-        match_indices,            # arg2
-        bs,                       # arg3: int
-        max_seen_eid,             # arg4: int
-        mem_graph_out,            # arg5: torch.Tensor [4, max_edges]
-        store_quad_out,           # arg6: torch.Tensor [4, max_msgs]
-        edge_counter,             # arg7: torch.int32
-        msg_counter               # arg8: torch.int32
-    )
-     # Step 4: Slice output using counters
-    e_cnt = edge_counter.item()
-    m_cnt = msg_counter.item()
-    mem_graph_final = mem_graph_out[:, :e_cnt]
-    store_quad_final = store_quad_out[:, :m_cnt]
+#     mem_update_graph.apan_mem_graph(
+#         od_updated.contiguous(),  # arg0: torch.Tensor [N, 5]
+#         match_ptr,                # arg1
+#         match_indices,            # arg2
+#         bs,                       # arg3: int
+#         max_seen_eid,             # arg4: int
+#         mem_graph_out,            # arg5: torch.Tensor [4, max_edges]
+#         store_quad_out,           # arg6: torch.Tensor [4, max_msgs]
+#         edge_counter,             # arg7: torch.int32
+#         msg_counter               # arg8: torch.int32
+#     )
+#      # Step 4: Slice output using counters
+#     e_cnt = edge_counter.item()
+#     m_cnt = msg_counter.item()
+#     mem_graph_final = mem_graph_out[:, :e_cnt]
+#     store_quad_final = store_quad_out[:, :m_cnt]
 
-    return mem_graph_final, store_quad_final
+#     return mem_graph_final, store_quad_final
 
 
 
@@ -166,7 +166,10 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
     # breakpoint()
     # Compare every valid key to all match_vals
     # breakpoint()
-    chunk_size = 16384
+    chunk_size = 8192#int(280000000/match_vals_all.shape[1])#32768#16384
+    # print("loops {}".format(match_vals_all.shape[1]/chunk_size))
+    # print(chunk_size)
+    # breakpoint()
     start = 0
     kv_list = []
     km_list = []
@@ -174,6 +177,7 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
         end = min(start+chunk_size, key_vals_all.shape[0])
         partial_key = key_vals_all[start:end,]
         partial_match_mask = (match_vals_all == partial_key)
+        # breakpoint()
         partial_dla_indices_per_row = partial_match_mask.nonzero(as_tuple=False)
         partial_i_valid = partial_dla_indices_per_row[:, 0] + start  # which row in valid_keys
         partial_i_match = partial_dla_indices_per_row[:, 1]  # which match index
