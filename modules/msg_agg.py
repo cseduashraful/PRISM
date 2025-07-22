@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch_geometric.utils import scatter
-from torch_scatter import scatter_max, scatter_softmax, scatter_sum
+from torch_scatter import scatter_max, scatter_softmax, scatter_sum, scatter_add
 
 
 class LastAggregator(torch.nn.Module):
@@ -24,13 +24,56 @@ class LastAggregator(torch.nn.Module):
         return out
 
 
+class MeanAggregator_old(torch.nn.Module):
+    def __init__(self, emb_dim: int = 100):
+        super().__init__()
+    def forward(self, msg: Tensor, index: Tensor, t: Tensor, dim_size: int, inverse_indices = None):
+        # breakpoint()
+        if inverse_indices is not None:
+            return scatter(msg, index, dim=0, dim_size=dim_size, reduce="mean")
+        else:
+            return scatter(msg[inverse_indices], index, dim=0, dim_size=dim_size, reduce="mean")
+
+import mapped_scatter
 class MeanAggregator(torch.nn.Module):
     def __init__(self, emb_dim: int = 100):
         super().__init__()
-    def forward(self, msg: Tensor, index: Tensor, t: Tensor, dim_size: int):
-        # breakpoint()
-        return scatter(msg, index, dim=0, dim_size=dim_size, reduce="mean")
-    
+
+    def forward(self, msg: Tensor, index: Tensor, t: Tensor, dim_size: int, inverse_indices: Tensor = None):
+        if inverse_indices is None:
+            return scatter(msg, index, dim=0, dim_size=dim_size, reduce="mean")
+        else:
+            # msg[inverse_indices] is not materialized; we do the equivalent operation manually
+            # breakpoint()
+            b = torch.zeros(dim_size, msg.size(1), device=msg.device)
+
+            # Call kernel (in-place update)
+            mapped_scatter.scatter_add_mapped(msg, inverse_indices, index, b)
+            ones = torch.ones(index.size(), dtype=msg.dtype, device=msg.device)
+            count = scatter_sum(ones, index, 0, None, dim_size)
+            # count[count < 1] = 
+            b = b / count.unsqueeze(-1).clamp(min=1)
+            # breakpoint()
+
+
+            # msg_expanded_sum = scatter_add(msg, inverse_indices, dim=0, dim_size=index.size(0))  # [N, D]
+            # count = torch.bincount(inverse_indices, minlength=index.size(0)).clamp(min=1).unsqueeze(-1)  # [N, 1]
+            # msg_avg = msg_expanded_sum / count  # average over inverse_indices group
+
+            # # Now scatter to final destinations using index
+            # b = scatter_add(msg_avg, index, dim=0, dim_size=dim_size)
+            # a = scatter(msg[inverse_indices], index, dim=0, dim_size=dim_size, reduce="mean")
+            # if  torch.allclose(a, b, atol=1e-6, rtol=1e-5):
+            #     print("okay")
+            # else:
+            #     breakpoint()
+
+            return   b# [dim_size, D]
+
+
+
+#aggr = self.aggr_module(msg_unique[inverse_indices], ux, b_t[inverse_indices], n_id.size(0))
+
 
 # import torch
 # from torch import Tensor

@@ -23,6 +23,10 @@ setup(
             'mem_update_graph',
             ['mem_update_graph.cu']
         ),
+        CUDAExtension(
+            name='mapped_scatter',
+            sources=['mapped_scatter.cu'],
+        ),
         
     ],
     cmdclass={

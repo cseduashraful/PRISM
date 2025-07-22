@@ -502,7 +502,28 @@ def train(targs, max_seen_id):
             # breakpoint()
             b_t = dataset['data'].t[b_eid_cpu].to(device)
             b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
+            # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
+
+
+
+
+            # Get unique (src, dst, eid) triples
+            triplet_keys = mem_graph_quad[[0, 1, 3]].T  # shape: [N, 3]
+            unique_keys, inverse_indices = torch.unique(triplet_keys, dim=0, return_inverse=True)
+
+            # Use unique EIDs to extract just the raw messages and timestamps once
+            unique_eids = unique_keys[:, 2]  # this is just eid column
+            b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
+            b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+                
+
+
+
+
+
+
+
             # breakpoint()
             # print("Updated memory Computed")
             z = model['gnn'](
@@ -525,7 +546,9 @@ def train(targs, max_seen_id):
             loss.backward()
             optimizer.step()
 
-            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+            # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+            
             store_eid = store_quad[3].cpu()
             # breakpoint()
             dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
@@ -695,6 +718,8 @@ def test_new(targs, max_seen_id, split_mode):
         preds = []
 
         for i in range(num_neg):
+            # print(i)
+            # breakpoint()
             neg_dst = neg_batch_tensor_T[i]
             root_ts = torch.cat([pos_t, pos_t, pos_t], dim = 0).double().to(device)
             root_nodes = torch.cat([pos_src, pos_dst, neg_dst], dim = 0).to(device)
@@ -721,12 +746,31 @@ def test_new(targs, max_seen_id, split_mode):
                 mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated,bs, max_seen_eid)
                 # print("Memgraph Constructed")
                 # breakpoint()
-                b_eid = mem_graph_quad[3]#e_id[bmsk]
-                b_eid_cpu = b_eid.cpu()
+                # b_eid = mem_graph_quad[3]#e_id[bmsk]
+                # b_eid_cpu = b_eid.cpu()
+                # # breakpoint()
+                # b_t = dataset['data'].t[b_eid_cpu].to(device)
+                # b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+                # z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data=dataset['data'])
                 # breakpoint()
-                b_t = dataset['data'].t[b_eid_cpu].to(device)
-                b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data=dataset['data'])
+
+
+                # Get unique (src, dst, eid) triples
+                triplet_keys = mem_graph_quad[[0, 1, 3]].T  # shape: [N, 3]
+                unique_keys, inverse_indices = torch.unique(triplet_keys, dim=0, return_inverse=True)
+
+                # Use unique EIDs to extract just the raw messages and timestamps once
+                unique_eids = unique_keys[:, 2]  # this is just eid column
+                b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
+                b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+                # _apply_intra_batch_info(mem_graph_quad, n_id, b_t_unique, b_raw_msg_unique, old_mem, unique_keys, inverse_indices)
+
+
+
+
+
+                
                 
             else:
 
@@ -796,8 +840,23 @@ def test_new(targs, max_seen_id, split_mode):
                     preds.append(pos_out)
                 neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
                 preds.append(neg_out)
+            
+            # torch.cuda.empty_cache()
+            # Free all temporary variables from the current negative sample loop
+            # del neg_dst
+            # del root_ts, root_nodes
+            # del n_id, e_id, edge_index
+            # del mem_graph_quad
+            # del store_quad
+            # del b_eid, b_eid_cpu
+            # del b_t, b_raw_msg
+            # del z_m, last_update
+            # del z
+            # # del pos_out, neg_out  # even if not always present, safe to delete
+            # torch.cuda.empty_cache()
 
         all_y_preds = torch.cat(preds, dim=1)
+        del preds
         # breakpoint()
         for i in range(all_y_preds.size(0)):
             y_pred = all_y_preds[i]  # shape [1000]
@@ -823,15 +882,27 @@ def test_new(targs, max_seen_id, split_mode):
             od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
             mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated,bs, max_seen_eid)
 
-            b_eid = mem_graph_quad[3]#e_id[bmsk]
-            b_eid_cpu = b_eid.cpu()
-                # breakpoint()
-            b_t = dataset['data'].t[b_eid_cpu].to(device)
-            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+            # b_eid = mem_graph_quad[3]#e_id[bmsk]
+            # b_eid_cpu = b_eid.cpu()
+            #     # breakpoint()
+            # b_t = dataset['data'].t[b_eid_cpu].to(device)
+            # b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
 
-            # breakpoint()
-            # n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
-            z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
+            # # breakpoint()
+            # # n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+            # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
+
+
+            triplet_keys = mem_graph_quad[[0, 1, 3]].T  # shape: [N, 3]
+            unique_keys, inverse_indices = torch.unique(triplet_keys, dim=0, return_inverse=True)
+
+                # Use unique EIDs to extract just the raw messages and timestamps once
+            unique_eids = unique_keys[:, 2]  # this is just eid column
+            b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
+            b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+            z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+                
+
             store_eid = store_quad[3].cpu()
             dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
             model['memory'].update_state(n_id, z, last_update, store_quad, dirs.to(device))

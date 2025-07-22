@@ -1630,19 +1630,57 @@ class DA_APANMemory(torch.nn.Module):
         memory, last_update = self._get_updated_memory(n_id, data =  data)
         return memory, last_update
     
-    def forward(self, n_id: Tensor, mem_graph, t, raw_msg, data=None) -> Tuple[Tensor, Tensor]:
+    def forward(self, n_id: Tensor, mem_graph, t, raw_msg, unique_keys, inverse_indices, data=None) -> Tuple[Tensor, Tensor]:
         memory, last_update = self._get_updated_memory(n_id, data = data)
         if mem_graph[0].size(0) == 0:
             # breakpoint()
             return memory, last_update
         for i in range(self.layer-1):
-            memory, last_update = self._apply_intra_batch_info(mem_graph, n_id, t, raw_msg, memory)
-        return  self._apply_intra_batch_info(mem_graph, n_id, t, raw_msg, memory)
+            memory, last_update = self._apply_intra_batch_info(mem_graph, n_id, t, raw_msg, memory, unique_keys, inverse_indices)
+        return  self._apply_intra_batch_info(mem_graph, n_id, t, raw_msg, memory, unique_keys, inverse_indices)
     
-    def _apply_intra_batch_info(self, mem_graph, n_id, b_t, b_raw_msg, old_mem):
-        msg, t, ux, dst  = self._intra_batch_compute_msg( mem_graph, n_id, b_t, b_raw_msg)
+    def _apply_intra_batch_info(self, mem_graph, n_id, b_t, b_raw_msg, old_mem, unique_keys, inverse_indices):
+        # breakpoint()
+        # msg, t, ux, dst  = self._intra_batch_compute_msg( mem_graph, n_id, b_t, b_raw_msg)
 
-        aggr = self.aggr_module(msg, ux, t, n_id.size(0))
+        src = n_id[unique_keys[:, 0]]
+        dst = n_id[unique_keys[:, 1]]
+
+        t_rel = b_t - self.last_update[src]
+        t_enc = self.time_enc(t_rel.to(b_raw_msg.dtype))
+
+        msg_unique = self.msg_module(self.memory[src], self.memory[dst], b_raw_msg, t_enc)
+
+        ux = mem_graph[2]
+        # breakpoint()
+        # aggr = scatter(msg_unique[inverse_indices], ux, dim=0, dim_size=n_id.size(0), reduce="sum")
+        # aggr = self.aggr_module(msg_unique[inverse_indices], ux, b_t[inverse_indices], n_id.size(0))
+        aggr = self.aggr_module(msg_unique, ux, b_t, n_id.size(0), inverse_indices = inverse_indices)
+
+        # breakpoint()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        # src = n_id[mem_graph[0]]
+        # dst = n_id[mem_graph[1]]
+        # ux = mem_graph[2]
+        # t_rel = b_t - self.last_update[src]
+        # t_enc = self.time_enc(t_rel.to(b_raw_msg.dtype))
+        # msg = self.msg_module(self.memory[src], self.memory[dst], b_raw_msg, t_enc)
+
+
+        # aggr = self.aggr_module(msg, ux, b_t, n_id.size(0))
 
         # updated_memory = self.memory_updater(aggr, self.memory[n_id])
         if isinstance(self.memory_updater, (GRUCell, RNNCell)):
@@ -1651,11 +1689,15 @@ class DA_APANMemory(torch.nn.Module):
             x = torch.stack([old_mem, aggr], dim=1)
             updated_memory = self.memory_updater(x)
             # updated_memory = self.memory_updater(aggr, self.memory[n_id])
-        last_update = scatter(t, ux, 0, n_id.size(0), reduce="max")
+        # breakpoint()
+        last_update = scatter(b_t[inverse_indices], ux, 0, n_id.size(0), reduce="max")
         # breakpoint()
         return updated_memory, last_update
 
     def _intra_batch_compute_msg(self, mem_graph, n_id, t, raw_msg):
+        # x, xinv = torch.unique(mem_graph[3], dim=0, return_inverse=True)
+
+
         src = n_id[mem_graph[0]]
         dst = n_id[mem_graph[1]]
         ux = mem_graph[2]
