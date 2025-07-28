@@ -15,12 +15,12 @@ def main():
     print("*** Negative Sample Generation ***")
 
     # setting the required parameters
-    num_neg_e_per_pos = 1000 #11000 #10000 #20 #100
+    num_neg_e_per_pos = 100 #11000 #10000 #20 #100
     neg_sample_strategy = "hist_rnd" #"rnd"
     rnd_seed = 42
 
 
-    name = "stackoverflow"
+    name = "wiki-talk"
     dataset = PyGLinkPropPredDataset(name=name, root="datasets")
     train_mask = dataset.train_mask
     val_mask = dataset.val_mask

@@ -41,6 +41,20 @@ from tgb.utils.utils import add_inverse_quadruples
 
 PROJ_DIR = "/work/pi_mserafini_umass_edu/ashraful/"
 
+def load_toydata(fname):
+    df = pd.read_csv(fname, skiprows=1, header=None)
+    src = df.iloc[:, 1].values.astype(int)
+    dst = df.iloc[:, 2].values.astype(int)
+    # dst += int(src.max()) + 1
+    t = df.iloc[:, 3].values
+    msg = msg = np.ones((t.shape[0], 1))#torch.load(edgefeatfile).numpy()#df.iloc[:, 4:].values
+    idx = np.arange(t.shape[0])
+    w = np.ones(t.shape[0])
+
+    return pd.DataFrame({"u": src, "i": dst, "ts": t, "idx": idx, "w": w}), msg, None
+
+
+
 def load_edgelist_emailEucore(fname: str) -> pd.DataFrame:
     df = pd.read_csv(fname, sep='\s+', header=None)#pd.read_csv(fname, skiprows=1, header=None)
     src = df.iloc[:, 0].values.astype(int)
@@ -462,6 +476,8 @@ class LinkPropPredDataset(object):
             
             elif self.name == "wiki-talk":
                 df, edge_feat, node_ids = load_edgelist_wikitalk(self.meta_dict['fname'], self.meta_dict["efFile"])
+            elif self.name == "toy":
+                df, edge_feat, node_ids = load_toydata(self.meta_dict['fname'])
 
 
             else:

@@ -567,6 +567,7 @@ def train(targs, max_seen_id):
         else:
             mem_graph_quad_uf  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
             mem_graph_quad = mem_graph_quad_uf
+            # breakpoint()
 
             remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , src, pos_dst)
             remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
@@ -700,7 +701,8 @@ def test_new(targs, max_seen_id, split_mode):
     max_seen_eid = max_seen_id
 
     # for pos_batch in loader:
-    for pos_batch in tqdm(loader, desc=split_mode):
+    # breakpoint()
+    for pos_batch in loader:#tqdm(loader, desc=split_mode):
         pos_src, pos_dst, pos_t, pos_msg = (
             pos_batch.src,
             pos_batch.dst,
@@ -714,8 +716,8 @@ def test_new(targs, max_seen_id, split_mode):
         neg_batch_tensor_T = neg_batch_tensor.T
         # print()
         # breakpoint()
-        if split_mode == "val" and val_neg > -1:
-            idx = torch.randperm(neg_batch_tensor_T.size(0))[:5]
+        if val_neg > -1:
+            idx = torch.randperm(neg_batch_tensor_T.size(0))[:val_neg]
             neg_batch_tensor_T = neg_batch_tensor_T[idx]
         num_neg = neg_batch_tensor_T.shape[0]
         bs = pos_src.shape[0]

@@ -38,6 +38,9 @@ def main():
     custom_parser.add_argument('--decoder', type=str, default='fc')
     custom_parser.add_argument('--embedding', type=str, default='gat')
     custom_parser.add_argument('--val_neg', type=int, default=-1)
+    # custom_parser.add_argument('--ns', type=bool, default=True)
+    custom_parser.add_argument('--no-ns', dest='ns', action='store_false', help='Disable negative sampling')
+
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -52,6 +55,7 @@ def main():
     args.decoder = custom_args.decoder
     args.embedding = custom_args.embedding
     args.val_neg = custom_args.val_neg
+    args.load_ns = custom_args.ns
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -85,7 +89,8 @@ def main():
     # set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = True)
+    # breakpoint()
+    dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = args.load_ns)
     data = dataset['data']
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
