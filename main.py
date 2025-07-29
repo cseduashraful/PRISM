@@ -40,7 +40,7 @@ def main():
     custom_parser.add_argument('--val_neg', type=int, default=-1)
     # custom_parser.add_argument('--ns', type=bool, default=True)
     custom_parser.add_argument('--no-ns', dest='ns', action='store_false', help='Disable negative sampling')
-
+    custom_parser.add_argument('--chunk_size', type=int, default=256)
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -56,6 +56,7 @@ def main():
     args.embedding = custom_args.embedding
     args.val_neg = custom_args.val_neg
     args.load_ns = custom_args.ns
+    args.chunk_size = custom_args.chunk_size
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -101,7 +102,7 @@ def main():
         neg_dest_sampler = None
 
 
-    chunk_size = 256
+    chunk_size = args.chunk_size
     items = torch.cat([data.src, data.dst])
     unique_elements, counts = torch.unique(items, return_counts=True)
     max_freq = counts.max().item()
