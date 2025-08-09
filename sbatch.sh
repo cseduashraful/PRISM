@@ -5,7 +5,7 @@
 #SBATCH -G 1  # Number of GPUs
 
 #SBATCH --constraint=a100
-#SBATCH -t 4-12:00:00  # Job time limit
+#SBATCH -t 5-00:00:00  # Job time limit
 
 #SBATCH -o slurm-%j.out  # %j = job ID
 #SBATCH -q long
@@ -66,3 +66,9 @@ conda activate pyg
 #7-9-25
 # python main.py --decoder NCN --data reddit --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96
 # python tncn.py --data reddit --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001
+
+#7-22-2026
+# python main.py --data tgbl-wiki --bs 16384 --lr 0.001 --deliver_to neighbor --num_epoch 200 --patience 200 --num_run 1
+# python main.py --decoder NCN --data lastfm --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96
+python main.py --decoder NCN --data lastfm --bs 64 --num_epoch 200 --patience 200 --num_run 1 --lr 0.0001 --mxtt 72 --mxet 96 --val_neg 5
+# python tncn.py --data lastfm --bs 8192 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001 --val_neg 5
