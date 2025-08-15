@@ -31,7 +31,8 @@ ChunkResult preprocess(
 
     for (size_t i = 0; i < dst.size(); i++) {
         node_edges[dst[i]].emplace_back(ts[i], eid[i], src[i]);
-        node_edges[src[i]].emplace_back(ts[i], eid[i], dst[i]);
+        if (dst[i]!=src[i])
+            node_edges[src[i]].emplace_back(ts[i], eid[i], dst[i]);
     }
 
     vector<vector<double>> ts_chunks;

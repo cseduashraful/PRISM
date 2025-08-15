@@ -20,7 +20,7 @@ def main():
     rnd_seed = 42
 
 
-    name = "wiki-talk"
+    name = "superuser"
     dataset = PyGLinkPropPredDataset(name=name, root="datasets")
     train_mask = dataset.train_mask
     val_mask = dataset.val_mask

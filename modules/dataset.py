@@ -53,6 +53,26 @@ def load_toydata(fname):
 
     return pd.DataFrame({"u": src, "i": dst, "ts": t, "idx": idx, "w": w}), msg, None
 
+def load_superuser(fname):
+    # breakpoint()
+    # Read space-separated file
+    df = pd.read_csv(fname, 
+                    sep=r"\s+",       # split on any whitespace
+                    header=None,      # no header row in file
+                    names=["src", "dst", "ts"])  # optional column names
+
+    # breakpoint()
+    src = df.iloc[:, 0].values.astype(int)
+    dst = df.iloc[:, 1].values.astype(int)
+    # dst += int(src.max()) + 1
+    t = df.iloc[:, 2].values
+    msg = msg = np.ones((t.shape[0], 1))#torch.load(edgefeatfile).numpy()#df.iloc[:, 4:].values
+    idx = np.arange(t.shape[0])
+    w = np.ones(t.shape[0])
+
+    return pd.DataFrame({"u": src, "i": dst, "ts": t, "idx": idx, "w": w}), msg, None
+
+
 
 
 def load_edgelist_emailEucore(fname: str) -> pd.DataFrame:
@@ -149,11 +169,13 @@ class LinkPropPredDataset(object):
             meta_dict: dictionary containing meta information about the dataset, should contain key 'dir_name' which is the name of the dataset folder
             preprocess: whether to pre-process the dataset
         """
-        custom_names = ["mooc","lastfm","emailEucore","reddit", "emailEucore1000", "stackoverflow", "wiki-talk"]
+        custom_names = ["superuser","mooc","lastfm","emailEucore","reddit", "emailEucore1000", "stackoverflow", "wiki-talk"]
         self.name = name  ## original name
         # check if dataset url exist
         if self.name in DATA_URL_DICT:
             self.url = DATA_URL_DICT[self.name]
+        elif self.name == "superuser":
+            self.url = "https://drive.google.com/file/d/1uoPQwZDwpeh6Qi46DDbNJo54RY0PLO6V/view?usp=sharing"
         elif self.name == "mooc":
             self.url = "https://drive.google.com/file/d/1fKCGBtu5Htmf1mQvMoGIefPn8HY9RqrK/view?usp=sharing"#"https://drive.google.com/file/d/1d5ld0p5NFzIm6-UFo0mq8OJMKTGGSDlO/view?usp=sharing"#"https://github.com/cseduashraful/datasets/raw/main/temporallinkpred/mooc/mooc.zip"
         elif self.name == "emailEucore1000":
@@ -478,6 +500,8 @@ class LinkPropPredDataset(object):
                 df, edge_feat, node_ids = load_edgelist_wikitalk(self.meta_dict['fname'], self.meta_dict["efFile"])
             elif self.name == "toy":
                 df, edge_feat, node_ids = load_toydata(self.meta_dict['fname'])
+            elif self.name == "superuser":
+                df, edge_feat, node_ids = load_superuser(self.meta_dict['fname'])
 
 
             else:

@@ -99,12 +99,13 @@ class Recent_K_Sampler:
         other_node_chunks_selected = self.prefetch_buffer_other_node[slot]
 
         chunk_ids_local = global_to_local[chunk_ids]
+        # print("chubk ids: ",chunk_ids)
         previous_chunk_ids_local = torch.where(
             previous_chunk_ids != -1,
             global_to_local[previous_chunk_ids],
             torch.full_like(previous_chunk_ids, -1)
         )
-
+        # breakpoint()
         # Step 4: Fused find + collect sampling
         collected_ts_indices = sampler.fused_find_and_collect(
             ts_chunks_selected,
@@ -114,7 +115,7 @@ class Recent_K_Sampler:
             ts_chunks_selected.size(-1),
             k
         )
-
+        # breakpoint()
         eid_chunks_flattened = eid_chunks_selected.flatten()
         other_node_chunks_flattened = other_node_chunks_selected.flatten()
         # print("collected_ts_indices: ", collected_ts_indices)
@@ -123,6 +124,8 @@ class Recent_K_Sampler:
         # breakpoint()
         sampled_eids = eid_chunks_flattened[collected_ts_indices]
         sampled_eids[collected_ts_indices == -1] = -1
+        # print("sampled eids: ", sampled_eids)
+        # breakpoint()
 
         sampled_other_nodes = other_node_chunks_flattened[collected_ts_indices]
         sampled_other_nodes[collected_ts_indices == -1] = -1
@@ -160,7 +163,7 @@ class Recent_K_Sampler:
     def transform_eids(self, sampled_eids, sampled_other_nodes, root_node, neg_cnt = 1):
         # breakpoint()
         batch_size, k = sampled_eids.shape
-
+        # print("Sampled eids: ", sampled_eids)
         # Step 1: Flatten and find valid entries
         eids_flat = sampled_eids.view(-1)
         other_nodes_flat = sampled_other_nodes.view(-1)
@@ -168,6 +171,7 @@ class Recent_K_Sampler:
 
         valid_mask = (eids_flat != -1)
         valid_eids = eids_flat[valid_mask].cpu()
+        # print("valid eids: ", valid_eids)
         valid_other_nodes = other_nodes_flat[valid_mask]
 
         # Step 2: Always update assoc mapping (even if already present)

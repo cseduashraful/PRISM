@@ -104,6 +104,7 @@ def main():
 
     chunk_size = args.chunk_size
     items = torch.cat([data.src, data.dst])
+    # breakpoint()
     unique_elements, counts = torch.unique(items, return_counts=True)
     max_freq = counts.max().item()
     max_chunk_per_node = 1+max_freq//chunk_size
@@ -119,6 +120,7 @@ def main():
         chunk_size,
         max_chunk_per_node
     )
+    # breakpoint()
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
 
     # breakpoint()
@@ -197,6 +199,10 @@ def main():
         save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}'
         early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
                                         tolerance=TOLERANCE, patience=PATIENCE)
+        if args.data == "superuser":
+            known_dsts = unique_destination_nodes
+        else:
+            known_dsts = None
         targs = {
             'model': model,
             'optimizer':optimizer,
@@ -212,6 +218,7 @@ def main():
             'decoder': args.decoder,
             'embedding': args.embedding,
             'val_neg': args.val_neg,
+            'known_dsts': known_dsts,
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()

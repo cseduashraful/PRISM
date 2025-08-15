@@ -5,9 +5,19 @@ from tqdm import tqdm
 import mem_update_graph
 
 
-def train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler):
+def train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler, known_dsts = None):
     bs = pos_dst.shape[0]
-    if neg_sampler is None:
+    if known_dsts is not None and neg_sampler is None:
+        # breakpoint()
+        neg_dst = torch.randint(
+                0,
+                known_dsts.size(0),
+                (bs,),
+                dtype=torch.long,
+        )
+        neg_dst = known_dsts[neg_dst].to(device)
+        # print(neg_dst)
+    elif neg_sampler is None:
         neg_dst = torch.randint(
                 min_dst_idx,
                 max_dst_idx + 1,
@@ -389,6 +399,10 @@ def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_ei
     bedge = torch.stack([bsrc, bdst]).to(device)
 
     bedge_all = model['memory'].mem_graph(n_id[torch.cat([bedge[0,:], bedge[1,:]])],torch.cat([bedge[1,:], bedge[1,:]]) , src, pos_dst)
+    
+
+  
+    
     fall_back = neighbor_loader.assoc[n_id[torch.cat([bedge[0,:], bedge[1,:]])]]
 
     updated_ball = torch.where(bedge_all != -1, bedge_all, fall_back)
@@ -400,6 +414,7 @@ def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_ei
     mem_eid = torch.cat([new_eids, new_eids, e_id[bmsk]])
     del_addr = torch.cat([mem_graph_triplet[2, :], b_edge_index[1]])
     relative_mem_id = mem_eid - (max_seen_eid + 1)
+    # breakpoint()
     mem_graph_quad_tmp =  torch.vstack([mem_graph_triplet[:2,relative_mem_id], del_addr, mem_eid.to(device)])
     direction = del_addr<bs
     src_part = mem_graph_quad_tmp[:, direction]
@@ -448,6 +463,7 @@ def train(targs, max_seen_id):
     neighbor_loader = targs['sampler']
 
     neg_sampler = targs['neg_sampler']
+    known_dsts = targs['known_dsts']
     deliver_to = targs['deliver_to']
     decoder = targs['decoder']
     embedding = targs['embedding']
@@ -463,7 +479,7 @@ def train(targs, max_seen_id):
         src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
         bs  = src.shape[0]
 
-        neg_dst = train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler)
+        neg_dst = train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler, known_dsts = known_dsts)
         # neg_dst = torch.randint(
         #     min_dst_idx,
         #     max_dst_idx + 1,
@@ -474,13 +490,14 @@ def train(targs, max_seen_id):
         root_ts = torch.cat([t, t, t], dim = 0).double()
         root_nodes = torch.cat([src, pos_dst, neg_dst], dim = 0)
         n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+        # breakpoint()
         if decoder == 'NCN':
             nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
             nid_ts[:root_nodes.shape[0]] = root_ts
             n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
         # breakpoint()
         if deliver_to == "neighbor":
-            # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
+            # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edgrooe_index, n_id)
             bsrc = torch.stack([torch.arange(src.shape[0]).to(device), pos_dst])
             bdst = torch.stack([torch.arange(src.shape[0], 2*src.shape[0]).to(device), src])
             bndst = torch.stack([torch.arange(2*src.shape[0], 3*src.shape[0]).to(device), torch.full((src.shape[0],), -1).to(device)])

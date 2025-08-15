@@ -27,7 +27,7 @@ class Evaluator(object):
         self.name = name
         self.k_value = k_value  # for computing `hits@k`
         self.valid_metric_list = ['hits@', 'mrr']
-        custom_names = ["mooc","lastfm","emailEucore","reddit", "emailEucore1000", "wiki-talk", "stackoverflow"]
+        custom_names = ["superuser", "mooc","lastfm","emailEucore","reddit", "emailEucore1000", "wiki-talk", "stackoverflow"]
         if self.name not in DATA_EVAL_METRIC_DICT:
             if self.name in custom_names:#== "mooc" or self.name == "lastfm" or self.name == "emailEucore" or self.name == "reddit":
                 print("Evaluator for ", custom_names)
