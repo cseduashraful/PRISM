@@ -165,7 +165,7 @@ def train_apan(model, data, train_loader, neighbor_loader, optimizer, criterion,
 
 
 @torch.no_grad()
-def test(loader, neg_sampler, max_seen_eid, split_mode='val'):
+def test(loader, neg_sampler, max_seen_eid, split_mode='val', val_neg=-1):
     r"""
     Evaluated the dynamic link prediction
     Evaluation happens as 'one vs. many', meaning that each positive edge is evaluated against many negative edges
@@ -196,6 +196,14 @@ def test(loader, neg_sampler, max_seen_eid, split_mode='val'):
         )
 
         neg_batch_list = neg_sampler.query_batch(pos_src, pos_dst, pos_t, split_mode=split_mode)
+        min_len = min(len(inner) for inner in neg_batch_list)
+        neg_batch_tensor = torch.tensor([inner[:min_len] for inner in neg_batch_list])
+        neg_batch_tensor_T = neg_batch_tensor.T
+        if val_neg > -1:
+            idx = torch.randperm(neg_batch_tensor_T.size(0))[:val_neg]
+            neg_batch_tensor_T = neg_batch_tensor_T[idx]
+        neg_batch_tensor = neg_batch_tensor_T.T
+        neg_batch_list = neg_batch_tensor.tolist()
 
         for idx, neg_batch in enumerate(neg_batch_list):
             src = torch.full((1 + len(neg_batch),), pos_src[idx], device=device)
@@ -252,10 +260,19 @@ def test(loader, neg_sampler, max_seen_eid, split_mode='val'):
 
 
 
+import argparse
+import sys
+
+custom_parser = argparse.ArgumentParser(add_help=False)
+custom_parser.add_argument('--val_neg', type=int, default=-1)
+custom_args, remaining_argv = custom_parser.parse_known_args()
+sys.argv = [sys.argv[0]] + remaining_argv
+args, _ = get_args()
+args.val_neg = custom_args.val_neg
 
 # Set parameters
 start_overall = timeit.default_timer()
-args, _ = get_args()
+# args, _ = get_args()
 print("INFO: Arguments:", args)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -385,7 +402,7 @@ for run_idx in range(NUM_RUNS):
             
             # # validation
             start_val = timeit.default_timer()
-            perf_metric_val = test(val_loader, neg_sampler, train_data.num_events-1, split_mode="val")
+            perf_metric_val = test(val_loader, neg_sampler, train_data.num_events-1, split_mode="val", val_neg = args.val_neg)
             print(f"\tValidation {metric}: {perf_metric_val: .4f}")
             mrrs.append(perf_metric_val)
             print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
@@ -417,7 +434,7 @@ for run_idx in range(NUM_RUNS):
 
 #     # final testing
     start_test = timeit.default_timer()
-    perf_metric_test = test(test_loader, neg_sampler,train_data.num_events+val_data.num_events -1 ,split_mode="test")
+    perf_metric_test = test(test_loader, neg_sampler,train_data.num_events+val_data.num_events -1 ,split_mode="test", val_neg = args.val_neg)
 
     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
     print(f"\tTest: {metric}: {perf_metric_test: .4f}")

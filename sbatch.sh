@@ -70,5 +70,9 @@ conda activate pyg
 #7-22-2026
 # python main.py --data tgbl-wiki --bs 16384 --lr 0.001 --deliver_to neighbor --num_epoch 200 --patience 200 --num_run 1
 # python main.py --decoder NCN --data lastfm --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96
-python main.py --decoder NCN --data lastfm --bs 64 --num_epoch 200 --patience 200 --num_run 1 --lr 0.0001 --mxtt 72 --mxet 96 --val_neg 5
+# python main.py --decoder NCN --data lastfm --bs 64 --num_epoch 200 --patience 200 --num_run 1 --lr 0.0001 --mxtt 72 --mxet 96 --val_neg 5
 # python tncn.py --data lastfm --bs 8192 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001 --val_neg 5
+
+#8-17
+# python apan.py --data lastfm --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001 --val_neg 5
+# python apan.py --data reddit --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001
