@@ -2013,7 +2013,7 @@ class DAAAPANMemory(torch.nn.Module):
         memory_updater_cell: str = "gru",
         mailbox_size: int = 10,
         num_head: int = 2,
-        layer: int = 1,
+        layer: int = 3,
     ):
         super().__init__()
 

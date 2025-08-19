@@ -32,7 +32,10 @@ def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
     custom_parser.add_argument('--mxtt', type=int, default=48)
     custom_parser.add_argument('--mxet', type=int, default=72)
-    custom_parser.add_argument('--debug', type=bool, default=False)
+    # custom_parser.add_argument('--debug', type=bool, default=False)
+    custom_parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+
+    
     custom_parser.add_argument('--custom_neg', type=bool, default=False)
     custom_parser.add_argument('--deliver_to', type=str, default='self')
     custom_parser.add_argument('--decoder', type=str, default='fc')
@@ -42,6 +45,7 @@ def main():
     custom_parser.add_argument('--no-ns', dest='ns', action='store_false', help='Disable negative sampling')
     custom_parser.add_argument('--chunk_size', type=int, default=256)
     custom_parser.add_argument('--skip_cnt', type=int, default=16)
+    custom_parser.add_argument('--m_pass', type=int, default=3)
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -59,6 +63,7 @@ def main():
     args.load_ns = custom_args.ns
     args.chunk_size = custom_args.chunk_size
     args.skip_cnt = custom_args.skip_cnt
+    args.m_pass = custom_args.m_pass 
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -151,6 +156,7 @@ def main():
                 TIME_DIM,
                 message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
                 aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
+                layer = args.m_pass,
             ).to(device)
         else:
             memory = DA_APANMemory(
@@ -160,6 +166,7 @@ def main():
                 TIME_DIM,
                 message_module=IdentityMessage(data.msg.size(-1), MEM_DIM, TIME_DIM),
                 aggregator_module=Agg(emb_dim=data.msg.size(-1) + 2 * MEM_DIM + TIME_DIM),
+                layer =args.m_pass,
             ).to(device)
         if args.embedding == "time_emb":
             gnn = TimeEmbedding(
@@ -265,14 +272,15 @@ def main():
         print("'loss' : ",losses,",")
         print("'time' : ",tims, ",")
         # ==================================================== Test
-        # first, load the best model
-        early_stopper.load_checkpoint(model)
-         # final testing
-        start_test = timeit.default_timer()
-        perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+        if not debug:
+            # first, load the best model
+            early_stopper.load_checkpoint(model)
+            # final testing
+            start_test = timeit.default_timer()
+            perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
 
-        print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-        print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+            print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+            print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
 
 
 if __name__ == "__main__":
