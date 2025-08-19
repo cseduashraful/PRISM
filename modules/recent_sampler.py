@@ -2,13 +2,17 @@ import sampler
 import torch
 
 class Recent_K_Sampler:
-    def __init__(self, sampler_data, max_chunk_per_node, k, num_nodes, device='cuda', apan = False):
+    def __init__(self, sampler_data, max_chunk_per_node, k, num_nodes, device='cuda', apan = False, skip_cnt = 1):
         self.device = device
         self.max_chunk_per_node = max_chunk_per_node
         self.k = k
         self.num_nodes = num_nodes
         self.assoc = torch.arange(self.num_nodes, device = device)
         self.apan = apan
+        if apan:
+            self.skip_cnt = skip_cnt
+        else:
+            self.skip_cnt = 1
 
         # Preprocess and store TCI structure on CPU
         self.chunk_map = torch.tensor(sampler_data['chunk_map'], dtype=torch.long, device=device)
@@ -199,7 +203,26 @@ class Recent_K_Sampler:
 
         n_ids = torch.cat([root_node, on])
         return n_ids, valid_eids, edge_index
+
+    def coalesce(self, row_node_pairs):
+        # row_node_pairs: [N, 3]  (col1, col2, col3), on CUDA
+        keys = row_node_pairs[:, 1:3]                             # (col2, col3)
+        keys_unique, inv = torch.unique(keys, dim=0, return_inverse=True)
+
+        vals = row_node_pairs[:, 0]                               # col1
+        num_groups = keys_unique.size(0)
+
+        # Use scatter-reduce to get per-group mins (fast + GPU-friendly)
+        group_mins = torch.empty(num_groups, device=vals.device, dtype=vals.dtype)
+        group_mins.fill_(torch.iinfo(vals.dtype).max)
+        group_mins.scatter_reduce_(0, inv, vals, reduce='amin', include_self=True)
+
+        # Write back: replace col1 by the min for its (col2,col3) group
+        row_node_pairs[:, 0] = group_mins[inv]
+        return row_node_pairs
+
     def map_valid(self, x, offset):
+        # breakpoint()
         mask = x != -1
         new_x = torch.full_like(x, -1)
 
@@ -209,9 +232,28 @@ class Recent_K_Sampler:
 
         # Build [row_idx, node_id] pairs
         row_node_pairs = torch.stack([row_idx, flat_vals], dim=1)  # shape: [num_valid, 2]
+        
 
+
+        # breakpoint()
         # Get unique pairs and inverse indices
+        
+
+        # breakpoint()
+        if self.skip_cnt>1:
+            clone = row_node_pairs.clone()
+            row_node_pairs[:, 0] = row_node_pairs[:, 0] // self.skip_cnt
+
+            clone = torch.cat([clone, row_node_pairs], dim=1)
+            clone = clone[:, :3]
+            clone = self.coalesce(clone)
+            row_node_pairs = clone[:, :2]
+
         unique_pairs, inverse = torch.unique(row_node_pairs, dim=0, return_inverse=True)
+
+        # u, i = torch.unique(row_node_pairs, dim=0, return_inverse=True)
+        # breakpoint()
+
 
         inverse = inverse + offset
         # Fill new_x with ID

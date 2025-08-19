@@ -41,6 +41,7 @@ def main():
     # custom_parser.add_argument('--ns', type=bool, default=True)
     custom_parser.add_argument('--no-ns', dest='ns', action='store_false', help='Disable negative sampling')
     custom_parser.add_argument('--chunk_size', type=int, default=256)
+    custom_parser.add_argument('--skip_cnt', type=int, default=16)
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -57,6 +58,7 @@ def main():
     args.val_neg = custom_args.val_neg
     args.load_ns = custom_args.ns
     args.chunk_size = custom_args.chunk_size
+    args.skip_cnt = custom_args.skip_cnt
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -124,7 +126,7 @@ def main():
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
 
     # breakpoint()
-    sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, apan = APAN)
+    sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, apan = APAN, skip_cnt = args.skip_cnt)
        # for saving the results...
     results_path = f'{osp.dirname(osp.abspath(__file__))}/saved_results'
     if not osp.exists(results_path):

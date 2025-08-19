@@ -276,117 +276,117 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
     return mem_graph_quad, store_quad
 
 
-def getMem_graph_apan_store(od_updated, bs, max_seen_eid, device):
+# def getMem_graph_apan_store(od_updated, bs, max_seen_eid, device):
 
-    match_dict = getMatchDict(od_updated)
-    msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid = [], [], [], []
+#     match_dict = getMatchDict(od_updated)
+#     msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid = [], [], [], []
 
-    keys = od_updated[:, 1]
-    conds = od_updated[:, 0]
-    bidxs = od_updated[:, 3]
-    for i in range(od_updated.shape[0]):
-        key = keys[i].item()
-        if key == -1:
-            continue
-        cond = conds[i].item()
-        batch_edge_index = bidxs[i].item()
+#     keys = od_updated[:, 1]
+#     conds = od_updated[:, 0]
+#     bidxs = od_updated[:, 3]
+#     for i in range(od_updated.shape[0]):
+#         key = keys[i].item()
+#         if key == -1:
+#             continue
+#         cond = conds[i].item()
+#         batch_edge_index = bidxs[i].item()
 
-        # msk = od_updated[:,2]==key
-        # dla = info[msk]
-        dla = match_dict[key]
+#         # msk = od_updated[:,2]==key
+#         # dla = info[msk]
+#         dla = match_dict[key]
 
-        valid_dla_mask = od_updated[dla, 3] > batch_edge_index
-        valid_dla = dla[valid_dla_mask]
-        # If no valid dla, append to msg_store
-        if valid_dla.shape[0] == 0:
-            msg_store_nid.append(key)
-            msg_store_eid.append(batch_edge_index + max_seen_eid + 1)
-            msg_store_src.append(cond)
-            msg_store_dst.append(cond + bs if cond < bs else cond % bs)
-            continue
+#         valid_dla_mask = od_updated[dla, 3] > batch_edge_index
+#         valid_dla = dla[valid_dla_mask]
+#         # If no valid dla, append to msg_store
+#         if valid_dla.shape[0] == 0:
+#             msg_store_nid.append(key)
+#             msg_store_eid.append(batch_edge_index + max_seen_eid + 1)
+#             msg_store_src.append(cond)
+#             msg_store_dst.append(cond + bs if cond < bs else cond % bs)
+#             continue
 
-    store_quad = torch.tensor([msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid], device=device, dtype=torch.long)
+#     store_quad = torch.tensor([msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid], device=device, dtype=torch.long)
     
-    return store_quad
+#     return store_quad
 
 
 
 
-def getMem_graph_apan_v2(od_updated, bs, max_seen_eid, device):
-    # info = torch.arange(od_updated.size(0), device = od_updated.device)
-    # breakpoint()
+# def getMem_graph_apan_v2(od_updated, bs, max_seen_eid, device):
+#     # info = torch.arange(od_updated.size(0), device = od_updated.device)
+#     # breakpoint()
     
-    match_dict = getMatchDict(od_updated)
-    # breakpoint()
-    e_src, e_dst, e_dla, e_eid = [], [], [], []
-    msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid = [], [], [], []
+#     match_dict = getMatchDict(od_updated)
+#     # breakpoint()
+#     e_src, e_dst, e_dla, e_eid = [], [], [], []
+#     msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid = [], [], [], []
 
-    keys = od_updated[:, 1]
-    conds = od_updated[:, 0]
-    bidxs = od_updated[:, 3]
-    for i in range(od_updated.shape[0]):
-        key = keys[i].item()
-        if key == -1:
-            continue
+#     keys = od_updated[:, 1]
+#     conds = od_updated[:, 0]
+#     bidxs = od_updated[:, 3]
+#     for i in range(od_updated.shape[0]):
+#         key = keys[i].item()
+#         if key == -1:
+#             continue
 
 
-        cond = conds[i].item()
-        batch_edge_index = bidxs[i].item()
+#         cond = conds[i].item()
+#         batch_edge_index = bidxs[i].item()
 
-        # msk = od_updated[:,2]==key
-        # dla = info[msk]
-        dla = match_dict[key]
+#         # msk = od_updated[:,2]==key
+#         # dla = info[msk]
+#         dla = match_dict[key]
 
-        valid_dla_mask = od_updated[dla, 3] > batch_edge_index
-        valid_dla = dla[valid_dla_mask]
+#         valid_dla_mask = od_updated[dla, 3] > batch_edge_index
+#         valid_dla = dla[valid_dla_mask]
         
 
-        # If no valid dla, append to msg_store
-        if valid_dla.shape[0] == 0:
-            msg_store_nid.append(key)
-            msg_store_eid.append(batch_edge_index + max_seen_eid + 1)
-            msg_store_src.append(cond)
-            msg_store_dst.append(cond + bs if cond < bs else cond % bs)
-            continue
+#         # If no valid dla, append to msg_store
+#         if valid_dla.shape[0] == 0:
+#             msg_store_nid.append(key)
+#             msg_store_eid.append(batch_edge_index + max_seen_eid + 1)
+#             msg_store_src.append(cond)
+#             msg_store_dst.append(cond + bs if cond < bs else cond % bs)
+#             continue
 
-        # Efficient vectorized creation
-        n = valid_dla.shape[0]
-        dev = valid_dla.device
-        eid_val = batch_edge_index + max_seen_eid + 1
-        dst_val = cond + bs if cond < bs else cond % bs
+#         # Efficient vectorized creation
+#         n = valid_dla.shape[0]
+#         dev = valid_dla.device
+#         eid_val = batch_edge_index + max_seen_eid + 1
+#         dst_val = cond + bs if cond < bs else cond % bs
 
-        e_src.append(torch.full((n,), cond, device=dev))
-        e_dst.append(torch.full((n,), dst_val, device=dev))
-        e_dla.append(valid_dla)
-        e_eid.append(torch.full((n,), eid_val, device=dev))
+#         e_src.append(torch.full((n,), cond, device=dev))
+#         e_dst.append(torch.full((n,), dst_val, device=dev))
+#         e_dla.append(valid_dla)
+#         e_eid.append(torch.full((n,), eid_val, device=dev))
 
-    # Final concatenation
-    e_src = torch.cat(e_src) if e_src else torch.tensor([], device=od_updated.device)
-    e_dst = torch.cat(e_dst) if e_dst else torch.tensor([], device=od_updated.device)
-    e_dla = torch.cat(e_dla) if e_dla else torch.tensor([], device=od_updated.device)
-    e_eid = torch.cat(e_eid) if e_eid else torch.tensor([], device=od_updated.device)
-    # if torch.equal(e_src, e_src2) and torch.equal(e_dst, e_dst2) and torch.equal(e_dla, e_dla2) and torch.equal(e_eid, e_eid2):
-    #     print("okay")
-    # else:
-    #     breakpoint()
+#     # Final concatenation
+#     e_src = torch.cat(e_src) if e_src else torch.tensor([], device=od_updated.device)
+#     e_dst = torch.cat(e_dst) if e_dst else torch.tensor([], device=od_updated.device)
+#     e_dla = torch.cat(e_dla) if e_dla else torch.tensor([], device=od_updated.device)
+#     e_eid = torch.cat(e_eid) if e_eid else torch.tensor([], device=od_updated.device)
+#     # if torch.equal(e_src, e_src2) and torch.equal(e_dst, e_dst2) and torch.equal(e_dla, e_dla2) and torch.equal(e_eid, e_eid2):
+#     #     print("okay")
+#     # else:
+#     #     breakpoint()
 
     
-    mem_graph_quad = torch.stack([e_src, e_dst, e_dla, e_eid])
-    store_quad = torch.tensor([msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid], device=device, dtype=torch.long)
+#     mem_graph_quad = torch.stack([e_src, e_dst, e_dla, e_eid])
+#     store_quad = torch.tensor([msg_store_src, msg_store_dst, msg_store_nid, msg_store_eid], device=device, dtype=torch.long)
     
-    # if torch.equal(s_quad, store_quad):
-    #     print("store okay")
-    # else:
-    #     breakpoint()
+#     # if torch.equal(s_quad, store_quad):
+#     #     print("store okay")
+#     # else:
+#     #     breakpoint()
 
-    # if torch.equal(m_quad, mem_graph_quad):
-    #     print("mem okay")
-    # else:
-    #     breakpoint()
-    # # breakpoint()
-    # x, y = apan_cuda_launcher(od_updated, bs, max_seen_eid, match_dict, device)
-    # breakpoint()
-    return mem_graph_quad, store_quad
+#     # if torch.equal(m_quad, mem_graph_quad):
+#     #     print("mem okay")
+#     # else:
+#     #     breakpoint()
+#     # # breakpoint()
+#     # x, y = apan_cuda_launcher(od_updated, bs, max_seen_eid, match_dict, device)
+#     # breakpoint()
+#     return mem_graph_quad, store_quad
 
 
 
@@ -497,6 +497,7 @@ def train(targs, max_seen_id):
             n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
         # breakpoint()
         if deliver_to == "neighbor":
+            # breakpoint()
             # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edgrooe_index, n_id)
             bsrc = torch.stack([torch.arange(src.shape[0]).to(device), pos_dst])
             bdst = torch.stack([torch.arange(src.shape[0], 2*src.shape[0]).to(device), src])
@@ -506,7 +507,7 @@ def train(targs, max_seen_id):
             od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
             tmp = od_updated[:, 0] % bs
             od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
-
+            # breakpoint()
             # mem_graph_quad_v2, store_quad_v2 = getMem_graph_apan_v2(od_updated,bs, max_seen_eid, device)
             mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated, bs, max_seen_eid)
             # mem_graph_quad, store_quad = model['memory'].mem_graph(od_updated,bs, max_seen_eid)
@@ -928,7 +929,7 @@ def test_new(targs, max_seen_id, split_mode):
 
             store_eid = store_quad[3].cpu()
             dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
-            model['memory'].update_state(n_id, z, last_update, store_quad, dirs.to(device))
+            model['memory'].update_state(n_id, z_m, last_update, store_quad, dirs.to(device))
             # update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
         else:
             model['memory'].update_state_v2(
