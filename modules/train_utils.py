@@ -1029,3 +1029,64 @@ def train_with_custom_neg_sampler(targs):
 
     # breakpoint()
     return total_loss/dataset['train_length']
+
+
+
+
+
+
+
+
+def train_sample_only(targs, max_seen_id):
+    model = targs['model']
+    model['memory'].train()
+    model['gnn'].train()
+    model['link_pred'].train()
+    model['memory'].reset_state()
+
+    optimizer = targs['optimizer']
+    criterion = targs['criterion']
+
+    dataset = targs['dataset']
+    train_loader = dataset['train_dataloader']
+    device = targs['device']
+    min_dst_idx = targs['min_dst_idx']
+    max_dst_idx = targs['max_dst_idx']
+    neighbor_loader = targs['sampler']
+
+    neg_sampler = targs['neg_sampler']
+    known_dsts = targs['known_dsts']
+    deliver_to = targs['deliver_to']
+    decoder = targs['decoder']
+    embedding = targs['embedding']
+
+
+    total_loss = 0
+    max_seen_eid = max_seen_id
+
+    for batch in train_loader:
+        batch = batch.to(device)
+        # optimizer.zero_grad()
+
+        src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
+        bs  = src.shape[0]
+
+        neg_dst = train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler, known_dsts = known_dsts)
+        # neg_dst = torch.randint(
+        #     min_dst_idx,
+        #     max_dst_idx + 1,
+        #     (src.size(0),),
+        #     dtype=torch.long,
+        #     device=device,
+        # )
+        root_ts = torch.cat([t, t, t], dim = 0).double()
+        root_nodes = torch.cat([src, pos_dst, neg_dst], dim = 0)
+        n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+        # breakpoint()
+        if decoder == 'NCN':
+            nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+            nid_ts[:root_nodes.shape[0]] = root_ts
+            n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
+        # breakpoint()
+                # break
+    return None, None#total_loss/dataset['train_length'], max_seen_eid
