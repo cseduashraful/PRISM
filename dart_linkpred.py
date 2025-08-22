@@ -1,6 +1,6 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
-from modules.recent_sampler import Recent_K_Sampler
-from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler, train_sample_only
+# from modules.recent_sampler import Recent_K_Sampler
+from modules.train_utils import train as actrain, test_new as test
 from modules.memory_module import DAATGNMemory, DAAAPANMemory, DA_APANMemory
 
 from modules.neg_sampler import NegLinkSamplerDest
@@ -11,6 +11,7 @@ from modules.msg_func import IdentityMessage, MLPMessage
 from modules.decoder import LinkPredictor
 from modules.NCNDecoder.NCNPred import NCNPredictor
 from modules.grnstream import GRN_Stream
+import chunkio
 
 # from torch.optim.lr_scheduler import StepLR
 
@@ -25,94 +26,8 @@ import os.path as osp
 from pathlib import Path
 import argparse
 
-import preprocessor #openmp
+# import preprocessor #openmp
 
-def deep_size_info(obj):
-    import sys
-    import torch
-    
-    cpu_bytes, gpu_bytes = 0, 0
-    
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            c, g = deep_size_info(v)
-            cpu_bytes += c
-            gpu_bytes += g
-    elif isinstance(obj, (list, tuple)):
-        for v in obj:
-            c, g = deep_size_info(v)
-            cpu_bytes += c
-            gpu_bytes += g
-    elif torch.is_tensor(obj):
-        if obj.device.type == 'cpu':
-            cpu_bytes += obj.element_size() * obj.nelement()
-        else:
-            gpu_bytes += obj.element_size() * obj.nelement()
-    else:
-        cpu_bytes += sys.getsizeof(obj)
-    
-    return cpu_bytes, gpu_bytes
-
-import sys
-import torch
-
-def object_size_info(obj, seen=None):
-    if seen is None:
-        seen = set()
-    obj_id = id(obj)
-    if obj_id in seen:
-        return 0, 0
-    seen.add(obj_id)
-
-    cpu_bytes, gpu_bytes = 0, 0
-
-    if torch.is_tensor(obj):
-        # Tensors
-        if obj.device.type == "cpu":
-            cpu_bytes += obj.element_size() * obj.nelement()
-        else:
-            gpu_bytes += obj.element_size() * obj.nelement()
-
-    elif isinstance(obj, dict):
-        for k, v in obj.items():
-            c, g = object_size_info(k, seen)
-            cpu_bytes += c; gpu_bytes += g
-            c, g = object_size_info(v, seen)
-            cpu_bytes += c; gpu_bytes += g
-
-    elif isinstance(obj, (list, tuple, set)):
-        for v in obj:
-            c, g = object_size_info(v, seen)
-            cpu_bytes += c; gpu_bytes += g
-
-    elif hasattr(obj, "__dict__"):
-        for v in vars(obj).values():
-            c, g = object_size_info(v, seen)
-            cpu_bytes += c; gpu_bytes += g
-
-    else:
-        # Regular Python object
-        cpu_bytes += sys.getsizeof(obj)
-
-    return cpu_bytes, gpu_bytes
-
-
-import numpy as np
-import chunkio
-
-# Suppose you have lists/arrays:
-# src, dst, ts, eid = [...]
-# num_nodes = 1_000_000
-
-# res = chunkio.preprocess_streaming(
-#     src, dst, ts, eid,
-#     num_nodes,
-#     chunk_size=4,
-#     max_chunk_per_node=3,
-#     duplicate_undirected=True,
-#     out_dir="preproc_out",
-#     num_shards=256,
-# )
 
 
 
@@ -208,6 +123,10 @@ def main():
     print("Converting data to tci data.")
     start_epoch_train = timeit.default_timer()
 
+    from uuid import uuid4
+    folder_name = f"cache_{uuid4().hex[:8]}"
+    outdir = "preproc_out/"+folder_name
+
 
     tci_data = chunkio.preprocess_streaming(
         data.src.tolist(),
@@ -218,26 +137,9 @@ def main():
         chunk_size=chunk_size,
         max_chunk_per_node=max_chunk_per_node,
         duplicate_undirected=True,
-        out_dir="preproc_out",
+        out_dir=outdir,#"preproc_out",
         num_shards=256,
     )
-    # print("total_chunks:", res.total_chunks)
-    # print("bin files:", res.ts_path, res.eid_path, res.other_path)
-
-    # breakpoint()
-    # cache = chunkio.TorchChunkCache("preproc_out", chunk_size, 100)
-
-
-    # ids = torch.tensor([10, 20, 999, 10, 21, 22], dtype=torch.long)
-    # ts, eid, other = cache.get_chunks_torch(ids)  # torch tensors
-    # # Read a single chunk by id (function style)
-    # ts_k, eid_k, other_k = chunkio.read_chunk(res.out_dir, res.chunk_size, 4)
-
-    # # Or via a reader object
-    # reader = chunkio.ChunkReader(res.out_dir, res.chunk_size)
-    # ts_k, eid_k, other_k = reader.read_chunk(12345)
-
-    # breakpoint()
     # tci_data = preprocessor.preprocess(
     #     data.src.tolist(),
     #     data.dst.tolist(),#dst_list,
@@ -247,20 +149,13 @@ def main():
     #     chunk_size,
     #     max_chunk_per_node
     # )
-    # cpu_size, gpu_size = deep_size_info(tci_data)
-    # print(f"CPU size: {cpu_size/1024/1024:.2f} MB")
-    # print(f"GPU size: {gpu_size/1024/1024:.2f} MB")
-
     # breakpoint()
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
 
     # breakpoint()
-    sampler = GRN_Stream(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, chunk_size, cache_size = args.bs, apan = APAN, skip_cnt = args.skip_cnt)
-    cpu_size, gpu_size = object_size_info(sampler)
-    print(f"CPU size: {cpu_size/1024/1024:.2f} MB")
-    print(f"GPU size: {gpu_size/1024/1024:.2f} MB")
-    breakpoint()
+    # sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, apan = APAN, skip_cnt = args.skip_cnt)
        # for saving the results...
+    sampler = GRN_Stream(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, chunk_size, outdir, cache_size = args.bs, apan = APAN, skip_cnt = args.skip_cnt)
     results_path = f'{osp.dirname(osp.abspath(__file__))}/saved_results'
     if not osp.exists(results_path):
         os.mkdir(results_path)
@@ -367,52 +262,48 @@ def main():
         for epoch in range(1, NUM_EPOCH + 1):
             # training
             start_epoch_train = timeit.default_timer()
-            loss, max_seen_eid = train_sample_only(targs, -1)
+            loss, max_seen_eid = actrain(targs, -1)
             tim = timeit.default_timer() - start_epoch_train
-            print(f"Train Sampling Time (s): {tim: .4f}")
-            # print(
-            #     f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
-            # )
+            print(
+                f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
+            )
 
-            # tims.append(tim)
-            # losses.append(loss)
+            tims.append(tim)
+            losses.append(loss)
             t_tims += tim
 
-        s_time = t_tims/NUM_EPOCH
-        print(f"Average Train Sampling Time (s): {s_time: .4f}")
-
-        #     if not debug:
+            if not debug:
             
-        #         perf_metric_val, max_seen_id = test(targs, max_seen_eid, split_mode="val")
-        #         print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
-        #         # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
-        #         val_perf_list.append(perf_metric_val)
-        #         # check for early stopping
+                perf_metric_val, max_seen_id = test(targs, max_seen_eid, split_mode="val")
+                print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
+                # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
+                val_perf_list.append(perf_metric_val)
+                # check for early stopping
                 
-        #         if early_stopper.step_check(perf_metric_val, model):
-        #             break
-        #         if t_tims > MAX_TR_TIME:
-        #             break
+                if early_stopper.step_check(perf_metric_val, model):
+                    break
+                if t_tims > MAX_TR_TIME:
+                    break
 
-        #         e_tims += timeit.default_timer() - start_epoch_train
-        #         if e_tims > MAX_EXEC_TIME:
-        #             break
+                e_tims += timeit.default_timer() - start_epoch_train
+                if e_tims > MAX_EXEC_TIME:
+                    break
             
-        # # train_val_time = timeit.default_timer() - start_train_val
-        # print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
-        # print("'mrr' : ", val_perf_list, ",")
-        # print("'loss' : ",losses,",")
-        # print("'time' : ",tims, ",")
-        # # ==================================================== Test
-        # if not debug:
-        #     # first, load the best model
-        #     early_stopper.load_checkpoint(model)
-        #     # final testing
-        #     start_test = timeit.default_timer()
-        #     perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+        train_val_time = timeit.default_timer() - start_train_val
+        print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
+        print("'mrr' : ", val_perf_list, ",")
+        print("'loss' : ",losses,",")
+        print("'time' : ",tims, ",")
+        # ==================================================== Test
+        if not debug:
+            # first, load the best model
+            early_stopper.load_checkpoint(model)
+            # final testing
+            start_test = timeit.default_timer()
+            perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
 
-        #     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-        #     print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+            print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+            print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
 
 
 if __name__ == "__main__":
