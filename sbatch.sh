@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -c 8  # Number of Cores per Task
 #SBATCH -p gpu  # Partition
-#SBATCH --mem=128G
+#SBATCH --mem=32G
 #SBATCH -G 1  # Number of GPUs
 
-#SBATCH --constraint=a100
+#SBATCH --constraint=2080ti
 #SBATCH -t 5-00:00:00  # Job time limit
 
 #SBATCH -o slurm-%j.out  # %j = job ID

@@ -8,7 +8,7 @@ modules/__pycache__/
 saved_models/
 saved_results/
 exclude/
-
+preproc_out/
 logs/discard/
 logs/unchecked/
 *.out
