@@ -47,6 +47,7 @@ def main():
     custom_parser.add_argument('--val_neg', type=int, default=-1)
     # custom_parser.add_argument('--ns', type=bool, default=True)
     custom_parser.add_argument('--no-ns', dest='ns', action='store_false', help='Disable negative sampling')
+    custom_parser.add_argument('--full_test', action='store_true', help='Do not consider val_neg for test')
     custom_parser.add_argument('--chunk_size', type=int, default=256)
     custom_parser.add_argument('--skip_cnt', type=int, default=16)
     custom_parser.add_argument('--m_pass', type=int, default=3)
@@ -68,6 +69,7 @@ def main():
     args.chunk_size = custom_args.chunk_size
     args.skip_cnt = custom_args.skip_cnt
     args.m_pass = custom_args.m_pass 
+    args.full_test = custom_args.full_test
 
     # args.num_epoch =  1000
     args.num_run = 1
@@ -300,6 +302,8 @@ def main():
             early_stopper.load_checkpoint(model)
             # final testing
             start_test = timeit.default_timer()
+            if args.full_test:
+                targs['val_neg'] = -1
             perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
 
             print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
