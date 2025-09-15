@@ -613,10 +613,14 @@ def train(targs, max_seen_id):
             z = torch.cat([z[remap], z[3*bs:]])
             last_update = torch.cat([last_update[remap], last_update[3*bs:]])
             
+            # breakpoint()
             ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , src, pos_dst)
 
             updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
             edge_index = torch.stack([updated_src, edge_index[1,:]])
+            # breakpoint()
+            # if edge_index.max()>=z.size(0):
+            #     breakpoint()
             if embedding == "time_emb":
                 nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
                 nid_ts[:root_nodes.shape[0]] = root_ts
