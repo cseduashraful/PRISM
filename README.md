@@ -1,4 +1,4 @@
-# SDaTGNN: Scalable Dependency-Aware Temporal GNN Framework
+# PRISM: Parallel Refinement of Intra-Batch Staleness in MTGNN
 
 **SDaTGNN** is a fast and memory-efficient framework for temporal graph learning. It supports large-batch training with multi-version memory updates and dependency-aware message passing.
 
