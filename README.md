@@ -55,7 +55,7 @@ python main.py
 python main.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
 ```
 
-To with disk offloading
+To run with disk offloading
 
 ```bash
 python dart_linkpred.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
