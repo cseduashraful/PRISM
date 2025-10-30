@@ -65,7 +65,7 @@ python dart_linkpred.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neigh
 
 | Argument       | Description                                                                              |
 | -------------- | ---------------------------------------------------------------------------------------- |
-| `--data`       | Dataset name. Supported: `tgbl-wiki`, `reddit`, `mooc`, etc. *(Default: tgbl-wiki)*      |
+| `--data`       | Dataset name. Supported: `tgbl-wiki`, `reddit`, `lastfm`, `tgbl-coin`, `tgbl-comment`, etc. *(Default: tgbl-wiki)*      |
 | `--bs`         | Batch size                                                                               |
 | `--lr`         | Learning rate                                                                            |
 | `--mxtt`       | Max training time in hours *(Default: 48)*                                               |
