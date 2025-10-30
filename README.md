@@ -36,6 +36,12 @@ To compile the custom C++ and CUDA extensions:
 python setup.py build_ext --inplace
 ```
 
+To compile the disk offloading routine:
+
+```bash
+python prep_setup.py build_ext --inplace
+```
+
 ## 🚀 Running the Code
 
 The main training and evaluation script is:
@@ -47,6 +53,12 @@ python main.py
 
 ```bash
 python main.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
+```
+
+To with disk offloading
+
+```bash
+python dart_linkpred.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
 ```
 
 ## 🧾 Argument Descriptions
