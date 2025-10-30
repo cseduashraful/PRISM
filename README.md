@@ -1,12 +1,12 @@
 # PRISM: Parallel Refinement of Intra-Batch Staleness in MTGNN
 
-**PRISM** is a fast and memory-efficient framework for temporal graph learning. It supports large-batch training with multi-version memory updates and dependency-aware message passing.
+**PRISM** is a fast framework for memory-augmented temporal graph learning. It supports large-batch training with multi-version memory updates and dependency-aware message passing.
 
 ---
 
 ## 🔧 Key Components
 
-### ✅ Recent-K Sampler
+### ✅ GRN-Stream Sampler
 
 A GPU-accelerated temporal sampler optimized for fast and scalable training on dynamic graphs.
 
@@ -16,27 +16,27 @@ A GPU-accelerated temporal sampler optimized for fast and scalable training on d
 - Chunked, memory-efficient sampling  
 - Chronologically optimized batch construction  
 
-### ✅ Intra-Batch Temporal Discontinuity Handling
+### ✅ Intra-Batch Staleness Handling
 
 Mitigates stale memory problems within large batches using dependency-aware approximation.
 
 **Features:**
-- CUDA-accelerated memory update graph generation  
+- CUDA-accelerated memory computation graph generation  
 - Approximate multi-version intra-batch memory  
-- k-hop propagation to push approximation errors away  
-- Scalable k-layer memory update module  
+- Ensures k-fresh memory to push approximation errors k-steps away  
+- Parallel memory refinement of all nodes in the batch to achieve k-fresh memory  
 
 ---
 
 ## ⚙️ Build Instructions
 
-To compile the custom C++ and CUDA extensions:
+To compile the custom C++ and CUDA extensions (TCI Engine and GRN-Stream Sampler):
 
 ```bash
 python setup.py build_ext --inplace
 ```
 
-To compile the disk offloading routine:
+To compile the disk offloading routine (TCI Engine with disk-offloading):
 
 ```bash
 python prep_setup.py build_ext --inplace
@@ -72,7 +72,7 @@ python dart_linkpred.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neigh
 | `--mxet`       | Max total execution time (train + val) in hours *(Default: 72)*                          |
 | `--debug`      | If true, disables validation *(Default: False)*                                          |
 | `--custom_neg` | Use custom negative sampler *(Not implemented yet)*                                      |
-| `--deliver_to` | Memory delivery target: `self` (TGN, TNCN, Jodie) or `neighbor` (APAN) *(Default: self)* |
+| `--deliver_to` | Message delivery target: `self` (TGN, TNCN, Jodie) or `neighbor` (APAN) *(Default: self)* |
 | `--decoder`    | Decoder type: `fc` (TGN, APAN, Jodie) or `NCN` (TNCN) *(Default: fc)*                    |
 | `--embedding`  | Embedding type: `gat` (TGN, APAN, TNCN) or `time_emb` (Jodie) *(Default: gat)*           |
 | `--val_neg`    | Number of negatives during validation. `-1` means use all available. *(Default: -1)*     |
