@@ -345,6 +345,7 @@ class DAATGNMemory(torch.nn.Module):
 
         # Get local copy of updated `last_update`.
         dim_size = self.last_update.size(0)
+        # breakpoint()
         last_update = scatter(t, idx, 0, dim_size, reduce="max")[n_id]
 
         return memory, last_update
@@ -384,15 +385,15 @@ class DAATGNMemory(torch.nn.Module):
         src, dst, t, raw_msg = list(zip(*data))
         src = torch.cat(src, dim=0)
         dst = torch.cat(dst, dim=0)
-        t = torch.cat(t, dim=0)
-        raw_msg = torch.cat(raw_msg, dim=0)
+        t = torch.cat(t, dim=0).to(self.last_update[src].device)
+        raw_msg = torch.cat(raw_msg, dim=0).to(self.last_update[src].device)
         # breakpoint()
         t_rel = t - self.last_update[src]
         t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
-
+        # breakpoint()
         msg = msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
 
-        return msg, t, src, dst
+        return msg, t, src.to(t.device), dst
 
     def train(self, mode: bool = True):
         """Sets the module in training mode."""

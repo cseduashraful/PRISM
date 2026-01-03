@@ -128,9 +128,29 @@ def load_for_inference(save_model_dir: str, save_model_id: str):
 # --------------------------------------------------
 # Example usage
 # --------------------------------------------------
+import argparse
 if __name__ == "__main__":
     save_model_dir = "/path/to/saved_models"
     save_model_id = "SDA-TGN_wikipedia_1_0"
+
+    custom_parser = argparse.ArgumentParser(add_help=False)
+    # custom_parser.add_argument('--mxtt', type=int, default=48)
+    # custom_parser.add_argument('--mxet', type=int, default=72)
+    # # custom_parser.add_argument('--debug', type=bool, default=False)
+    # custom_parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+
+    
+    # custom_parser.add_argument('--custom_neg', type=bool, default=False)
+    # custom_parser.add_argument('--deliver_to', type=str, default='self')
+    # custom_parser.add_argument('--decoder', type=str, default='fc')
+    custom_parser.add_argument('--dir', type=str, default='saved_models')
+    custom_parser.add_argument('--id', type=str, default='SDA-TGN_tgbl-wiki_1_0')
+    custom_args, remaining_argv = custom_parser.parse_known_args()
+    
+    save_model_dir = custom_args.dir
+    save_model_id = custom_args.id
+
+    # breakpoint()
 
     args, model, dataset, device = load_for_inference(
         save_model_dir, save_model_id

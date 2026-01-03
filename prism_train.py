@@ -285,15 +285,15 @@ def main():
         print("'loss' : ",losses,",")
         print("'time' : ",tims, ",")
         # ==================================================== Test
-        if not debug:
-            # first, load the best model
-            early_stopper.load_checkpoint(model)
-            # final testing
-            start_test = timeit.default_timer()
-            perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+        # if not debug:
+        #     # first, load the best model
+        #     early_stopper.load_checkpoint(model)
+        #     # final testing
+        #     start_test = timeit.default_timer()
+        #     perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
 
-            print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-            print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+        #     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+        #     print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
 
 
 if __name__ == "__main__":
