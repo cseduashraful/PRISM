@@ -30,10 +30,19 @@ import preprocessor #openmp
 import json
 import os.path as osp
 
-def save_args_json(args, path):
-    with open(path, "w") as f:
-        json.dump(vars(args), f, indent=2, sort_keys=True)
+# def save_args_json(args, path, data):
 
+#     with open(path, "w") as f:
+#         json.dump(vars(args), f, indent=2, sort_keys=True)
+
+def save_args_json(args, path, data):
+    payload = vars(args).copy()          # all argparse args
+    payload["num_nodes"] = int(data.num_nodes)
+    payload["msg_size"] = int(data.msg.size(-1))
+    
+
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
 
 def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
@@ -218,7 +227,7 @@ def main():
 
         # Save args once per run (or save again each epoch if you want, but once is enough)
         args_path = osp.join(save_model_dir, f"{save_model_id}.args.json")
-        save_args_json(args, args_path)
+        save_args_json(args, args_path, data)
 
 
         if args.data == "superuser":

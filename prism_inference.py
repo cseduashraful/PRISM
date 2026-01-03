@@ -24,35 +24,35 @@ def load_args_json(args_path: str) -> SimpleNamespace:
 # --------------------------------------------------
 # Build model (must match training exactly)
 # --------------------------------------------------
-def build_model(args: SimpleNamespace, dataset: dict, device: torch.device) -> dict:
-    data = dataset["data"]
+def build_model(args: SimpleNamespace, device: torch.device) -> dict:
+    # data = dataset["data"]
 
     # Memory module
     if args.deliver_to == "self":
         memory = DAATGNMemory(
-            data.num_nodes,
-            data.msg.size(-1),
+            args.num_nodes,
+            args.msg_size,
             args.mem_dim,
             args.time_dim,
             message_module=IdentityMessage(
-                data.msg.size(-1), args.mem_dim, args.time_dim
+                args.msg_size, args.mem_dim, args.time_dim
             ),
             aggregator_module=Agg(
-                emb_dim=data.msg.size(-1) + 2 * args.mem_dim + args.time_dim
+                emb_dim=args.msg_size + 2 * args.mem_dim + args.time_dim
             ),
             layer=args.m_pass,
         ).to(device)
     else:
         memory = DA_APANMemory(
-            data.num_nodes,
-            data.msg.size(-1),
+            args.num_nodes,
+            args.msg_size,
             args.mem_dim,
             args.time_dim,
             message_module=IdentityMessage(
-                data.msg.size(-1), args.mem_dim, args.time_dim
+                args.msg_size, args.mem_dim, args.time_dim
             ),
             aggregator_module=Agg(
-                emb_dim=data.msg.size(-1) + 2 * args.mem_dim + args.time_dim
+                emb_dim=args.msg_size + 2 * args.mem_dim + args.time_dim
             ),
             layer=args.m_pass,
         ).to(device)
@@ -67,7 +67,7 @@ def build_model(args: SimpleNamespace, dataset: dict, device: torch.device) -> d
         gnn = GraphAttentionEmbedding(
             in_channels=args.mem_dim,
             out_channels=args.emb_dim,
-            msg_dim=data.msg.size(-1),
+            msg_dim=args.msg_size,
             time_enc=memory.time_enc,
         ).to(device)
 
@@ -116,14 +116,39 @@ def load_for_inference(save_model_dir: str, save_model_id: str):
 
     args = load_args_json(args_path)
 
-    load_ns = getattr(args, "load_ns", True)
-    dataset = read_data(args.data, args.bs, load_neg_sampler=load_ns)
+    
+    # dataset = read_data(args.data, args.bs, load_neg_sampler=load_ns)
 
-    model = build_model(args, dataset, device)
+    model = build_model(args, device)
     load_checkpoint(model, ckpt_path, device)
 
-    return args, model, dataset, device
+    return args, model, device
 
+
+
+def get_test_args(model, dataset, sampler):
+    if args.data == "superuser":
+        known_dsts = unique_destination_nodes
+    else:
+        known_dsts = None
+    targs = {
+        'model': model,
+            # 'optimizer':optimizer,
+            # 'criterion':criterion,
+        'dataset': dataset,
+            # 'assoc': assoc,
+        'min_dst_idx': min_dst_idx,
+        'max_dst_idx': max_dst_idx,
+        'device': device,
+        'sampler': sampler,
+        'neg_sampler': neg_dest_sampler,
+        'deliver_to': args.deliver_to,
+        'decoder': args.decoder,
+        'embedding': args.embedding,
+        'val_neg': args.val_neg,
+        'known_dsts': known_dsts,
+    }
+    return targs
 
 # --------------------------------------------------
 # Example usage
@@ -152,10 +177,81 @@ if __name__ == "__main__":
 
     # breakpoint()
 
-    args, model, dataset, device = load_for_inference(
+    args, model, device = load_for_inference(
         save_model_dir, save_model_id
     )
 
     print("Model loaded for inference")
     print("Device:", device)
     print("Dataset:", args.data)
+  
+    dataset = read_data(args.data, args.bs, load_neg_sampler = args.load_ns)
+    data = dataset['data']
+    unique_destination_nodes =  torch.unique(data.dst)
+    min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
+
+    from modules.neg_sampler import NegLinkSamplerDest
+    if args.custom_neg:
+        neg_dest_sampler = NegLinkSamplerDest(unique_destination_nodes)
+    else:
+        neg_dest_sampler = None
+
+
+    chunk_size = args.chunk_size
+    items = torch.cat([data.src, data.dst])
+    # breakpoint()
+    unique_elements, counts = torch.unique(items, return_counts=True)
+    max_freq = counts.max().item()
+    max_chunk_per_node = 1+max_freq//chunk_size
+    # breakpoint()
+    print("Converting data to tci data.")
+
+    import timeit
+    # import preprocessor
+    import chunkio
+
+    start_epoch_train = timeit.default_timer()
+    from uuid import uuid4
+    folder_name = f"cache_{uuid4().hex[:8]}"
+    outdir = "inference_preproc_out/"+folder_name
+
+
+    tci_data = chunkio.preprocess_streaming(
+        data.src.tolist(),
+        data.dst.tolist(),#dst_list,
+        data.t.double().tolist(),#ts_list,
+        torch.arange(data.src.shape[0]).tolist(),#eid_list,
+        data.num_nodes,
+        chunk_size=chunk_size,
+        max_chunk_per_node=max_chunk_per_node,
+        duplicate_undirected=True,
+        out_dir=outdir,#"preproc_out",
+        num_shards=256,
+    )
+
+    # tci_data = preprocessor.preprocess(
+    #     data.src.tolist(),
+    #     data.dst.tolist(),#dst_list,
+    #     data.t.double().tolist(),#ts_list,
+    #     torch.arange(data.src.shape[0]).tolist(),#eid_list,
+    #     data.num_nodes,
+    #     chunk_size,
+    #     max_chunk_per_node
+    # )
+    # breakpoint()
+    print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
+
+    from modules.train_utils import test_new as test
+    from modules.grnstream import GRN_Stream
+    sampler = GRN_Stream(tci_data, max_chunk_per_node, args.k_value, data.num_nodes, chunk_size, outdir, cache_size = args.bs, apan =  args.deliver_to == 'neighbor', skip_cnt = args.skip_cnt)
+    # sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, args.k_value, data.num_nodes, apan =  args.deliver_to == 'neighbor', skip_cnt = args.skip_cnt)
+    start_test = timeit.default_timer()
+    targs =  get_test_args(model, dataset, sampler)
+    # perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+
+    # print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+    # print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+
+
+
+
