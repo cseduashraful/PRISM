@@ -76,4 +76,5 @@ conda activate pyg
 #8-17
 # python apan.py --data lastfm --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001 --val_neg 5
 # python apan.py --data reddit --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001
-python prism_train.py --data tgbl-wiki --bs 4096  --lr 0.001 --deliver_to  self --num_epoch 4 --patience 4 --num_run 1
+# python prism_train.py --data tgbl-wiki --bs 2048  --lr 0.001 --deliver_to  self --num_epoch 30 --patience 30 --num_run 1
+python prism_inference.py

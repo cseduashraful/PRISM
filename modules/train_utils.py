@@ -388,21 +388,31 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
 #     # breakpoint()
 #     return mem_graph_quad, store_quad
 
-
+def SYNC(tag):
+    torch.cuda.synchronize()
+    print(f"[SYNC OK] {tag}", flush=True)
 
 
 
 def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device):
+    # SYNC("get mmgraph start")
     bmsk = e_id>max_seen_eid
     bdst = torch.arange(bs*2)
     bsrc = torch.cat([torch.arange(bs, bs*2), torch.arange(bs)])
     bedge = torch.stack([bsrc, bdst]).to(device)
-
+    # SYNC("bedge construction")
+    # breakpoint()
     bedge_all = model['memory'].mem_graph(n_id[torch.cat([bedge[0,:], bedge[1,:]])],torch.cat([bedge[1,:], bedge[1,:]]) , src, pos_dst)
     
 
-  
+    # SYNC("bedge all construction")
+    # torch.cuda.synchronize()
     
+
+
+
+
+
     fall_back = neighbor_loader.assoc[n_id[torch.cat([bedge[0,:], bedge[1,:]])]]
 
     updated_ball = torch.where(bedge_all != -1, bedge_all, fall_back)
@@ -748,16 +758,18 @@ def test_new(targs, max_seen_id, split_mode):
         for i in range(num_neg):
             # print(i)
             # breakpoint()
+            # SYNC("enter test_new loop")
             neg_dst = neg_batch_tensor_T[i]
             root_ts = torch.cat([pos_t, pos_t, pos_t], dim = 0).double().to(device)
             root_nodes = torch.cat([pos_src, pos_dst, neg_dst], dim = 0).to(device)
             # breakpoint()
             n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+            # SYNC("after sampling")
             if decoder == 'NCN':
                 nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
                 nid_ts[:root_nodes.shape[0]] = root_ts
                 n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
-
+            # SYNC("after building ncn decode")
             # bmsk = e_id>max_seen_eid
             if deliver_to == "neighbor":
                 # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
@@ -794,15 +806,10 @@ def test_new(targs, max_seen_id, split_mode):
                 z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
                 # _apply_intra_batch_info(mem_graph_quad, n_id, b_t_unique, b_raw_msg_unique, old_mem, unique_keys, inverse_indices)
 
-
-
-
-
-                
                 
             else:
 
-
+                # SYNC("enter tgn else block")
                 mem_graph_quad = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, pos_src, pos_dst, device)
                 b_eid = mem_graph_quad[3]#e_id[bmsk]
                 b_eid_cpu = b_eid.cpu()
@@ -942,6 +949,7 @@ def test_new(targs, max_seen_id, split_mode):
                 n_id, last_update, z_m)        
 
         max_seen_eid += bs
+        print(max_seen_eid)
     perf_metrics = float(torch.tensor(perf_list).mean())
 
     return perf_metrics, max_seen_eid

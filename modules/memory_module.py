@@ -93,6 +93,7 @@ class DAATGNMemory(torch.nn.Module):
         
     def mem_graph(self, ei_src, ei_dst, pos_node_s, pos_node_d):
         batch_size = pos_node_s.size(0)
+        # breakpoint()
         return mem_update_graph.mem_graph(
             ei_src.to(torch.int64).contiguous(),
             ei_dst.to(torch.int64).contiguous(),

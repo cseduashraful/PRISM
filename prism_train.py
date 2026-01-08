@@ -262,6 +262,7 @@ def main():
             # training
             start_epoch_train = timeit.default_timer()
             loss, max_seen_eid = actrain(targs, -1)
+            print("train max seen eid: ", max_seen_eid)
             tim = timeit.default_timer() - start_epoch_train
             print(
                 f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
@@ -274,6 +275,7 @@ def main():
             if not debug:
             
                 perf_metric_val, max_seen_id = test(targs, max_seen_eid, split_mode="val")
+                print("val max seen id: ", max_seen_id)
                 print(f"\tValidation {dataset['metric']}: {perf_metric_val: .4f}")
                 # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
                 val_perf_list.append(perf_metric_val)
@@ -294,15 +296,15 @@ def main():
         print("'loss' : ",losses,",")
         print("'time' : ",tims, ",")
         # ==================================================== Test
-        # if not debug:
-        #     # first, load the best model
-        #     early_stopper.load_checkpoint(model)
-        #     # final testing
-        #     start_test = timeit.default_timer()
-        #     perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+        if not debug:
+            # first, load the best model
+            early_stopper.load_checkpoint(model)
+            # final testing
+            start_test = timeit.default_timer()
+            perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
 
-        #     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-        #     print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+            print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+            print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
 
 
 if __name__ == "__main__":

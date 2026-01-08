@@ -198,7 +198,13 @@ if __name__ == "__main__":
 
 
     chunk_size = args.chunk_size
-    items = torch.cat([data.src, data.dst])
+    # breakpoint()
+
+    max_seen_eid = 133852#int(data.src.size(0)*.86)
+    trvl = int(data.src.size(0))
+
+
+    items = torch.cat([data.src[:trvl], data.dst[:trvl]])
     # breakpoint()
     unique_elements, counts = torch.unique(items, return_counts=True)
     max_freq = counts.max().item()
@@ -217,10 +223,10 @@ if __name__ == "__main__":
 
 
     tci_data = chunkio.preprocess_streaming(
-        data.src.tolist(),
-        data.dst.tolist(),#dst_list,
-        data.t.double().tolist(),#ts_list,
-        torch.arange(data.src.shape[0]).tolist(),#eid_list,
+        data.src[:trvl].tolist(),
+        data.dst[:trvl].tolist(),#dst_list,
+        data.t[:trvl].double().tolist(),#ts_list,
+        torch.arange(data.src[:trvl].shape[0]).tolist(),#eid_list,
         data.num_nodes,
         chunk_size=chunk_size,
         max_chunk_per_node=max_chunk_per_node,
@@ -229,17 +235,21 @@ if __name__ == "__main__":
         num_shards=256,
     )
 
-    # tci_data = preprocessor.preprocess(
-    #     data.src.tolist(),
-    #     data.dst.tolist(),#dst_list,
-    #     data.t.double().tolist(),#ts_list,
-    #     torch.arange(data.src.shape[0]).tolist(),#eid_list,
-    #     data.num_nodes,
-    #     chunk_size,
-    #     max_chunk_per_node
-    # )
-    # breakpoint()
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
+
+
+    # # later edges (later timestamps)
+    # tci_data = chunkio.extend_streaming_latestk_ordered_reuse(
+    #     tci_data,
+    #     data.src[trvl:].tolist(),
+    #     data.dst[trvl:].tolist(),
+    #     data.t[trvl:].double().tolist(),
+    #     torch.arange(data.src[trvl:].shape[0]).tolist(),
+    #     duplicate_undirected=True,
+    # )
+
+    # breakpoint()
+
 
     from modules.train_utils import test_new as test
     from modules.grnstream import GRN_Stream
@@ -247,10 +257,10 @@ if __name__ == "__main__":
     # sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, args.k_value, data.num_nodes, apan =  args.deliver_to == 'neighbor', skip_cnt = args.skip_cnt)
     start_test = timeit.default_timer()
     targs =  get_test_args(model, dataset, sampler)
-    # perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+    perf_metric_test, max_seen_eid = test(targs, max_seen_eid, split_mode="test")
 
-    # print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-    # print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+    print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+    print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
 
 
 
