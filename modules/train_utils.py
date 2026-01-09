@@ -949,7 +949,7 @@ def test_new(targs, max_seen_id, split_mode):
                 n_id, last_update, z_m)        
 
         max_seen_eid += bs
-        print(max_seen_eid)
+        # print(max_seen_eid)
     perf_metrics = float(torch.tensor(perf_list).mean())
 
     return perf_metrics, max_seen_eid

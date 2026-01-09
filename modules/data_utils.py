@@ -56,3 +56,32 @@ def read_data(DATA, BATCH_SIZE, load_neg_sampler = True):
         "transductive_mask": transductive_mask,
         "inductive_mask": inductive_mask,
     }
+
+
+
+
+import os, pickle, chunkio
+
+def save_tci_data(tci, save_path: str):
+    payload = dict(
+        chunk_map=tci.chunk_map,
+        chunk_last_ts=tci.chunk_last_ts,
+        chunk_size=int(tci.chunk_size),
+        total_chunks=int(tci.total_chunks),
+        out_dir=str(tci.out_dir),
+    )
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    with open(save_path, "wb") as f:
+        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+def load_tci_data(save_path: str):
+    with open(save_path, "rb") as f:
+        p = pickle.load(f)
+    # returns a REAL ChunkResultLite
+    return chunkio.make_tci(
+        p["chunk_map"],
+        p["chunk_last_ts"],
+        p["chunk_size"],
+        p["total_chunks"],
+        p["out_dir"],
+    )

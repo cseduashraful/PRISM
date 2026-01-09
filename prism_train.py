@@ -1,4 +1,4 @@
-from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
+from modules.data_utils import read_data, save_tci_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
 from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler
 from modules.memory_module import DAATGNMemory, DAAAPANMemory, DA_APANMemory
@@ -35,10 +35,11 @@ import os.path as osp
 #     with open(path, "w") as f:
 #         json.dump(vars(args), f, indent=2, sort_keys=True)
 
-def save_args_json(args, path, data):
+def save_args_json(args, path, data, folder_name):
     payload = vars(args).copy()          # all argparse args
     payload["num_nodes"] = int(data.num_nodes)
     payload["msg_size"] = int(data.msg.size(-1))
+    payload['folder_name'] = folder_name
     
 
     with open(path, "w") as f:
@@ -126,28 +127,82 @@ def main():
 
 
     chunk_size = args.chunk_size
-    items = torch.cat([data.src, data.dst])
+
+
+    trvl = 133852
+    items = torch.cat([data.src[:trvl], data.dst[:trvl]])
     # breakpoint()
     unique_elements, counts = torch.unique(items, return_counts=True)
     max_freq = counts.max().item()
     max_chunk_per_node = 1+max_freq//chunk_size
     # breakpoint()
     print("Converting data to tci data.")
+
+    import timeit
+    # import preprocessor
+    import chunkio
+
     start_epoch_train = timeit.default_timer()
-    tci_data = preprocessor.preprocess(
-        data.src.tolist(),
-        data.dst.tolist(),#dst_list,
-        data.t.double().tolist(),#ts_list,
-        torch.arange(data.src.shape[0]).tolist(),#eid_list,
+    from uuid import uuid4
+    folder_name = f"cache_{uuid4().hex[:8]}"
+    outdir = "inference_preproc_out/"+folder_name
+
+
+    tci_data = chunkio.preprocess_streaming(
+        data.src[:trvl].tolist(),
+        data.dst[:trvl].tolist(),#dst_list,
+        data.t[:trvl].double().tolist(),#ts_list,
+        torch.arange(data.src[:trvl].shape[0]).tolist(),#eid_list,
         data.num_nodes,
-        chunk_size,
-        max_chunk_per_node
+        chunk_size=chunk_size,
+        max_chunk_per_node=max_chunk_per_node,
+        duplicate_undirected=True,
+        out_dir=outdir,#"preproc_out",
+        num_shards=256,
     )
+    pkl_path = "inference_preproc_out/"+folder_name+"tci.pkl"
+    save_tci_data(tci_data, pkl_path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # items = torch.cat([data.src, data.dst])
+    # # breakpoint()
+    # unique_elements, counts = torch.unique(items, return_counts=True)
+    # max_freq = counts.max().item()
+    # max_chunk_per_node = 1+max_freq//chunk_size
+    # # breakpoint()
+    # print("Converting data to tci data.")
+
+    # start_epoch_train = timeit.default_timer()
+    # tci_data = preprocessor.preprocess(
+    #     data.src.tolist(),
+    #     data.dst.tolist(),#dst_list,
+    #     data.t.double().tolist(),#ts_list,
+    #     torch.arange(data.src.shape[0]).tolist(),#eid_list,
+    #     data.num_nodes,
+    #     chunk_size,
+    #     max_chunk_per_node
+    # )
     # breakpoint()
     print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
 
     # breakpoint()
-    sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, apan = APAN, skip_cnt = args.skip_cnt)
+    # sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, apan = APAN, skip_cnt = args.skip_cnt)
+
+    from modules.grnstream import GRN_Stream
+    sampler = GRN_Stream(tci_data, max_chunk_per_node, args.k_value, data.num_nodes, 
+                         chunk_size, outdir, cache_size = args.bs, apan =  args.deliver_to == 'neighbor', skip_cnt = args.skip_cnt)
+
        # for saving the results...
     results_path = f'{osp.dirname(osp.abspath(__file__))}/saved_results'
     if not osp.exists(results_path):
@@ -220,14 +275,14 @@ def main():
         # assoc = torch.empty(data.num_nodes, dtype=torch.long, device=device)
 
         # define an early stopper
-        save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
+        save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/{folder_name}/'
         save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}'
         early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
                                         tolerance=TOLERANCE, patience=PATIENCE)
 
         # Save args once per run (or save again each epoch if you want, but once is enough)
         args_path = osp.join(save_model_dir, f"{save_model_id}.args.json")
-        save_args_json(args, args_path, data)
+        save_args_json(args, args_path, data, folder_name)
 
 
         if args.data == "superuser":
@@ -296,15 +351,15 @@ def main():
         print("'loss' : ",losses,",")
         print("'time' : ",tims, ",")
         # ==================================================== Test
-        if not debug:
-            # first, load the best model
-            early_stopper.load_checkpoint(model)
-            # final testing
-            start_test = timeit.default_timer()
-            perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+        # if not debug:
+        #     # first, load the best model
+        #     early_stopper.load_checkpoint(model)
+        #     # final testing
+        #     start_test = timeit.default_timer()
+        #     perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
 
-            print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-            print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+        #     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+        #     print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
 
 
 if __name__ == "__main__":

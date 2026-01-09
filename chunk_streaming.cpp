@@ -716,6 +716,22 @@ ChunkResultLite extend_streaming_latestk_ordered_reuse(
 
 
 
+ChunkResultLite make_tci(
+    std::vector<std::vector<int64_t>> chunk_map,
+    std::vector<std::vector<double>>  chunk_last_ts,
+    int64_t chunk_size,
+    int64_t total_chunks,
+    const std::string& out_dir
+) {
+    const std::string ts_path    = out_dir + "/ts.bin";
+    const std::string eid_path   = out_dir + "/eid.bin";
+    const std::string other_path = out_dir + "/other.bin";
+    return { std::move(chunk_map), std::move(chunk_last_ts),
+             chunk_size, total_chunks,
+             ts_path, eid_path, other_path, out_dir };
+}
+
+
 //== end 2 increment
 
 
@@ -749,6 +765,13 @@ PYBIND11_MODULE(chunkio, m) {
           py::arg("num_shards") = 256);
 
     // -- extend
+    m.def("make_tci", &make_tci,
+      py::arg("chunk_map"),
+      py::arg("chunk_last_ts"),
+      py::arg("chunk_size"),
+      py::arg("total_chunks"),
+      py::arg("out_dir"));
+
     m.def("extend_streaming_latestk_ordered_reuse", &extend_streaming_latestk_ordered_reuse,
         py::arg("prev"),
         py::arg("src_new"), py::arg("dst_new"), py::arg("ts_new"), py::arg("eid_new"),
