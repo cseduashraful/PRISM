@@ -620,7 +620,12 @@ ChunkResultLite extend_streaming_latestk_ordered_reuse(
         }
     }
 
-    // Process each node independently
+
+
+    // Drop-in replacement: per-node processing inside extend_streaming_latestk_ordered_reuse()
+    // Key fix: ALWAYS keep filling the current tail chunk (tail_fill < chunk_size) before creating/evicting a new one.
+    // Also: after appending/reusing a chunk, we keep tail_cid + tail_fill updated so subsequent records pack correctly.
+
     for (auto& kv : by_node) {
         const int64_t node = kv.first;
         auto& recs = kv.second;
@@ -630,16 +635,17 @@ ChunkResultLite extend_streaming_latestk_ordered_reuse(
         auto& row_last = out.chunk_last_ts.at((size_t)node);
 
         int64_t count = num_chunks_in_row(row_map);  // current number of chunks (<=K)
+
+        // Track tail chunk id + how many entries are already filled in it.
+        int64_t tail_cid  = -1;
         int64_t tail_fill = 0;
 
         if (count > 0) {
-            const int64_t tail_cid = row_map[(size_t)(count - 1)];
+            tail_cid  = row_map[(size_t)(count - 1)];
             tail_fill = tail_fill_from_disk(ts_path, eid_path, other_path, chunk_size, tail_cid);
 
             // monotonic guard: new timestamps must be >= last existing ts in tail (if any)
             if (tail_fill > 0) {
-                // We can use metadata row_last[count-1] as "last ts" for the tail chunk if kept updated.
-                // But to be safe, we rely on row_last which your preprocess sets and our extend updates.
                 const double last_ts = row_last[(size_t)(count - 1)];
                 if (!recs.empty() && recs.front().ts < last_ts) {
                     throw std::runtime_error("extend_latestk: non-monotonic timestamps for node " + std::to_string(node));
@@ -647,67 +653,200 @@ ChunkResultLite extend_streaming_latestk_ordered_reuse(
             }
         }
 
-        size_t idx = 0;
+        // Process all new records for this node, packing into the tail chunk when possible.
+        for (size_t idx = 0; idx < recs.size(); /* increment inside */) {
+            const auto& r = recs[idx];
 
-        // 1) Fill partially-filled tail chunk first
-        if (count > 0 && tail_fill < chunk_size) {
-            const int64_t tail_cid = row_map[(size_t)(count - 1)];
-            while (idx < recs.size() && tail_fill < chunk_size) {
-                const auto& r = recs[idx++];
-                write_entry_inplace(ts_io, eid_io, oth_io, chunk_size, tail_cid, tail_fill, r.ts, r.eid, r.other);
-                tail_fill++;
-                row_last[(size_t)(count - 1)] = r.ts;
-            }
-        }
-
-        // 2) Remaining records: may create new chunks; if full K, evict oldest by shifting and reuse its cid
-        while (idx < recs.size()) {
-            const auto& r = recs[idx++];
-
-            // If tail is full OR node has no chunks, we need a fresh chunk to place this event at pos 0.
-            // (At this point tail is guaranteed full, because we filled it above.)
+            // Case A: No chunks yet -> create first chunk and write r at pos 0.
             if (count == 0) {
-                // allocate first chunk physically at end
                 const int64_t new_cid = out.total_chunks;
                 append_new_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, new_cid, r.ts, r.eid, r.other);
                 out.total_chunks++;
 
                 row_map[0]  = new_cid;
                 row_last[0] = r.ts;
-                count = 1;
+
+                count     = 1;
+                tail_cid  = new_cid;
                 tail_fill = 1;
+
+                ++idx;
                 continue;
             }
 
+            // Case B: Tail chunk exists and has free space -> write into it in-place.
+            if (tail_fill < chunk_size) {
+                write_entry_inplace(ts_io, eid_io, oth_io, chunk_size, tail_cid, tail_fill, r.ts, r.eid, r.other);
+                tail_fill++;
+                row_last[(size_t)(count - 1)] = r.ts;
+
+                ++idx;
+                continue;
+            }
+
+            // From here: tail is full, so we must get a "fresh" tail chunk (append or evict+reuse),
+            // then write current record as the first entry in that new tail chunk.
+
+            // Case C: We still have capacity (<K chunks) -> append a new chunk and make it the tail.
             if (count < K) {
-                // allocate a new chunk id at end and append it
                 const int64_t new_cid = out.total_chunks;
                 append_new_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, new_cid, r.ts, r.eid, r.other);
                 out.total_chunks++;
 
                 row_map[(size_t)count]  = new_cid;
                 row_last[(size_t)count] = r.ts;
+
                 count++;
+                tail_cid  = new_cid;
                 tail_fill = 1;
+
+                ++idx;
                 continue;
             }
 
-            // count == K: evict oldest (index 0), shift left, reuse evicted cid as new tail chunk
-            const int64_t evict_cid = row_map[0];
+            // Case D: count == K -> evict oldest (index 0), shift left, reuse evicted cid as new tail.
+            {
+                const int64_t evict_cid = row_map[0];
 
-            for (int64_t i = 0; i < K - 1; ++i) {
-                row_map[(size_t)i]  = row_map[(size_t)(i + 1)];
-                row_last[(size_t)i] = row_last[(size_t)(i + 1)];
+                for (int64_t i = 0; i < K - 1; ++i) {
+                    row_map[(size_t)i]  = row_map[(size_t)(i + 1)];
+                    row_last[(size_t)i] = row_last[(size_t)(i + 1)];
+                }
+
+                overwrite_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, evict_cid, r.ts, r.eid, r.other);
+
+                row_map[(size_t)(K - 1)]  = evict_cid;
+                row_last[(size_t)(K - 1)] = r.ts;
+
+                tail_cid  = evict_cid;
+                tail_fill = 1;
+
+                ++idx;
+                continue;
             }
-
-            // reuse evicted chunk id: overwrite it with empty padded chunk containing this event at pos 0
-            overwrite_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, evict_cid, r.ts, r.eid, r.other);
-
-            row_map[(size_t)(K - 1)]  = evict_cid;
-            row_last[(size_t)(K - 1)] = r.ts;
-            tail_fill = 1;
         }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // // Process each node independently
+    // for (auto& kv : by_node) {
+    //     const int64_t node = kv.first;
+    //     auto& recs = kv.second;
+    //     std::sort(recs.begin(), recs.end(), [](const Rec& a, const Rec& b){ return a.ts < b.ts; });
+
+    //     auto& row_map  = out.chunk_map.at((size_t)node);
+    //     auto& row_last = out.chunk_last_ts.at((size_t)node);
+
+    //     int64_t count = num_chunks_in_row(row_map);  // current number of chunks (<=K)
+    //     int64_t tail_fill = 0;
+
+    //     if (count > 0) {
+    //         const int64_t tail_cid = row_map[(size_t)(count - 1)];
+    //         tail_fill = tail_fill_from_disk(ts_path, eid_path, other_path, chunk_size, tail_cid);
+
+    //         // monotonic guard: new timestamps must be >= last existing ts in tail (if any)
+    //         if (tail_fill > 0) {
+    //             // We can use metadata row_last[count-1] as "last ts" for the tail chunk if kept updated.
+    //             // But to be safe, we rely on row_last which your preprocess sets and our extend updates.
+    //             const double last_ts = row_last[(size_t)(count - 1)];
+    //             if (!recs.empty() && recs.front().ts < last_ts) {
+    //                 throw std::runtime_error("extend_latestk: non-monotonic timestamps for node " + std::to_string(node));
+    //             }
+    //         }
+    //     }
+
+    //     size_t idx = 0;
+
+    //     // 1) Fill partially-filled tail chunk first
+    //     if (count > 0 && tail_fill < chunk_size) {
+    //         const int64_t tail_cid = row_map[(size_t)(count - 1)];
+    //         while (idx < recs.size() && tail_fill < chunk_size) {
+    //             const auto& r = recs[idx++];
+    //             write_entry_inplace(ts_io, eid_io, oth_io, chunk_size, tail_cid, tail_fill, r.ts, r.eid, r.other);
+    //             tail_fill++;
+    //             row_last[(size_t)(count - 1)] = r.ts;
+    //         }
+    //     }
+
+    //     // 2) Remaining records: may create new chunks; if full K, evict oldest by shifting and reuse its cid
+    //     while (idx < recs.size()) {
+    //         const auto& r = recs[idx++];
+
+    //         // If tail is full OR node has no chunks, we need a fresh chunk to place this event at pos 0.
+    //         // (At this point tail is guaranteed full, because we filled it above.)
+    //         if (count == 0) {
+    //             // allocate first chunk physically at end
+    //             const int64_t new_cid = out.total_chunks;
+    //             append_new_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, new_cid, r.ts, r.eid, r.other);
+    //             out.total_chunks++;
+
+    //             row_map[0]  = new_cid;
+    //             row_last[0] = r.ts;
+    //             count = 1;
+    //             tail_fill = 1;
+    //             continue;
+    //         }
+
+    //         if (count < K) {
+    //             // allocate a new chunk id at end and append it
+    //             const int64_t new_cid = out.total_chunks;
+    //             append_new_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, new_cid, r.ts, r.eid, r.other);
+    //             out.total_chunks++;
+
+    //             row_map[(size_t)count]  = new_cid;
+    //             row_last[(size_t)count] = r.ts;
+    //             count++;
+    //             tail_fill = 1;
+    //             continue;
+    //         }
+
+    //         // count == K: evict oldest (index 0), shift left, reuse evicted cid as new tail chunk
+    //         const int64_t evict_cid = row_map[0];
+
+    //         for (int64_t i = 0; i < K - 1; ++i) {
+    //             row_map[(size_t)i]  = row_map[(size_t)(i + 1)];
+    //             row_last[(size_t)i] = row_last[(size_t)(i + 1)];
+    //         }
+
+    //         // reuse evicted chunk id: overwrite it with empty padded chunk containing this event at pos 0
+    //         overwrite_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, evict_cid, r.ts, r.eid, r.other);
+
+    //         row_map[(size_t)(K - 1)]  = evict_cid;
+    //         row_last[(size_t)(K - 1)] = r.ts;
+    //         tail_fill = 1;
+    //     }
+    // }
 
     ts_io.flush(); eid_io.flush(); oth_io.flush();
     return out;

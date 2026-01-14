@@ -200,6 +200,7 @@ if __name__ == "__main__":
     # # breakpoint()
 
     max_seen_eid = 133852#int(data.src.size(0)*.86)
+    trvl = max_seen_eid+1
     # trvl = int(data.src.size(0))
 
 
@@ -243,15 +244,15 @@ if __name__ == "__main__":
     outdir = f"inference_preproc_out/cache_{id}"
     # breakpoint()
 
-    # # later edges (later timestamps)
-    # tci_data = chunkio.extend_streaming_latestk_ordered_reuse(
-    #     tci_data,
-    #     data.src[trvl:].tolist(),
-    #     data.dst[trvl:].tolist(),
-    #     data.t[trvl:].double().tolist(),
-    #     torch.arange(data.src[trvl:].shape[0]).tolist(),
-    #     duplicate_undirected=True,
-    # )
+    # later edges (later timestamps)
+    tci_data = chunkio.extend_streaming_latestk_ordered_reuse(
+        tci_data,
+        data.src[trvl:].tolist(),
+        data.dst[trvl:].tolist(),
+        data.t[trvl:].double().tolist(),
+        torch.arange(data.src[trvl:].shape[0]).tolist(),
+        duplicate_undirected=True,
+    )
 
     # breakpoint()
 
