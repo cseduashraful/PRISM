@@ -957,6 +957,331 @@ def test_new(targs, max_seen_id, split_mode):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+@torch.no_grad()
+def online_test(targs, max_seen_id, split_mode):
+    r"""
+    Evaluated the dynamic link prediction
+    Evaluation happens as 'one vs. many', meaning that each positive edge is evaluated against many negative edges
+
+    Parameters:
+        loader: an object containing positive attributes of the positive edges of the evaluation set
+        neg_sampler: an object that gives the negative edges corresponding to each positive edge
+        split_mode: specifies whether it is the 'validation' or 'test' set to correctly load the negatives
+    Returns:
+        perf_metric: the result of the performance evaluation
+    """
+    model = targs['model']
+    neighbor_loader = targs['sampler']
+    dataset = targs['dataset']
+    data = dataset['data']
+    deliver_to = targs['deliver_to']
+    if split_mode == 'val':
+        loader = dataset['val_dataloader']
+    else:
+        loader = dataset['test_dataloader']
+    device = targs['device']
+
+    metric = dataset['metric']
+    evaluator = dataset['evaluator']
+    neg_sampler = dataset['neg_sampler']
+    decoder = targs['decoder']
+    embedding = targs['embedding']
+    val_neg = targs['val_neg']
+
+
+
+    model['memory'].eval()
+    model['gnn'].eval()
+    model['link_pred'].eval()
+
+    perf_list = []
+
+    max_seen_eid = max_seen_id
+
+    # for pos_batch in loader:
+    # breakpoint()
+    for pos_batch in loader:#tqdm(loader, desc=split_mode):
+        pos_src, pos_dst, pos_t, pos_msg = (
+            pos_batch.src,
+            pos_batch.dst,
+            pos_batch.t,
+            pos_batch.msg,
+        )
+        bs = pos_src.shape[0]
+
+
+
+        #update neighborloader
+        
+        #todo: update sampler (neighbor_loader) with pos_src, pos_dst, pos_t,
+        new_start = max_seen_eid+1
+        new_end = new_start+bs
+        
+        neighbor_loader.extend_tci( data.src[new_start:new_end].tolist(), data.dst[new_start:new_end].tolist(), 
+                                   data.t[new_start:new_end].double().tolist(), torch.arange(new_start, new_end).tolist(),
+                                   duplicate_undirected=True)
+
+        neg_batch_list = neg_sampler.query_batch(pos_src, pos_dst, pos_t, split_mode=split_mode)
+        min_len = min(len(inner) for inner in neg_batch_list)
+        neg_batch_tensor = torch.tensor([inner[:min_len] for inner in neg_batch_list])
+        neg_batch_tensor_T = neg_batch_tensor.T
+        # print()
+        # breakpoint()
+        if val_neg > -1:
+            idx = torch.randperm(neg_batch_tensor_T.size(0))[:val_neg]
+            neg_batch_tensor_T = neg_batch_tensor_T[idx]
+        num_neg = neg_batch_tensor_T.shape[0]
+        
+        preds = []
+
+        for i in range(num_neg):
+            # print(i)
+            # breakpoint()
+            # SYNC("enter test_new loop")
+            neg_dst = neg_batch_tensor_T[i]
+            root_ts = torch.cat([pos_t, pos_t, pos_t], dim = 0).double().to(device)
+            root_nodes = torch.cat([pos_src, pos_dst, neg_dst], dim = 0).to(device)
+            # breakpoint()
+            n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+            # SYNC("after sampling")
+            if decoder == 'NCN':
+                nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+                nid_ts[:root_nodes.shape[0]] = root_ts
+                n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
+            # SYNC("after building ncn decode")
+            # bmsk = e_id>max_seen_eid
+            if deliver_to == "neighbor":
+                # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edge_index, n_id)
+                # breakpoint()
+                bsrc = torch.stack([torch.arange(pos_src.shape[0]).to(device), pos_dst.to(device)])
+                bdst = torch.stack([torch.arange(pos_src.shape[0], 2*pos_src.shape[0]).to(device), pos_src.to(device)])
+                bndst = torch.stack([torch.arange(2*pos_src.shape[0], 3*pos_src.shape[0]).to(device), torch.full((pos_src.shape[0],), -1).to(device)])
+            
+                od = torch.cat([ bsrc.T, bdst.T, bndst.T, neighbor_loader.id_to_pair], dim=0)
+                od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
+                tmp = od_updated[:, 0] % bs
+                od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
+
+                mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated,bs, max_seen_eid)
+                # print("Memgraph Constructed")
+                # breakpoint()
+                # b_eid = mem_graph_quad[3]#e_id[bmsk]
+                # b_eid_cpu = b_eid.cpu()
+                # # breakpoint()
+                # b_t = dataset['data'].t[b_eid_cpu].to(device)
+                # b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+                # z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data=dataset['data'])
+                # breakpoint()
+
+
+                # Get unique (src, dst, eid) triples
+                triplet_keys = mem_graph_quad[[0, 1, 3]].T  # shape: [N, 3]
+                unique_keys, inverse_indices = torch.unique(triplet_keys, dim=0, return_inverse=True)
+
+                # Use unique EIDs to extract just the raw messages and timestamps once
+                unique_eids = unique_keys[:, 2]  # this is just eid column
+                b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
+                b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+                # _apply_intra_batch_info(mem_graph_quad, n_id, b_t_unique, b_raw_msg_unique, old_mem, unique_keys, inverse_indices)
+
+                
+            else:
+
+                # SYNC("enter tgn else block")
+                mem_graph_quad = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, pos_src, pos_dst, device)
+                b_eid = mem_graph_quad[3]#e_id[bmsk]
+                b_eid_cpu = b_eid.cpu()
+                b_t = dataset['data'].t[b_eid_cpu].to(device)
+                b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+                b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+
+                z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+
+
+                remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , pos_src, pos_dst)
+                remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
+                remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
+
+                z_m = torch.cat([z_m[remap], z_m[3*bs:]])
+                last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+
+                ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , pos_src, pos_dst)
+                updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
+                edge_index = torch.stack([updated_src, edge_index[1,:]])
+
+            # z = model['gnn'](
+            #     z_m,
+            #     last_update,
+            #     edge_index,
+            #     dataset['data'].t[e_id].to(device),
+            #     dataset['data'].msg[e_id].to(device),
+            # )
+            # breakpoint()
+            if embedding == "time_emb":
+                nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+                nid_ts[:root_nodes.shape[0]] = root_ts
+                z = model['gnn'](
+                    z_m,
+                    last_update,
+                    nid_ts
+                )
+            else:
+                z = model['gnn'](
+                    z_m,
+                    last_update,
+                    edge_index,
+                    dataset['data'].t[e_id].to(device),
+                    dataset['data'].msg[e_id].to(device),
+                )
+
+            if decoder == "NCN":
+                # pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                # neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+
+                time_info = (last_update, pos_t)
+                src_re = torch.arange(bs)
+                pos_re = torch.arange(bs, 2*bs)
+                neg_re = torch.arange(2*bs, 3*bs)
+                if i == 0:
+                    pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), 2, cn_time_decay=False, time_info=time_info)
+                    preds.append(pos_out)
+                neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), 2, cn_time_decay=False, time_info=time_info)
+                preds.append(neg_out)
+            else:
+                if i == 0:
+                    pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                    preds.append(pos_out)
+                neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+                preds.append(neg_out)
+            
+            # torch.cuda.empty_cache()
+            # Free all temporary variables from the current negative sample loop
+            # del neg_dst
+            # del root_ts, root_nodes
+            # del n_id, e_id, edge_index
+            # del mem_graph_quad
+            # del store_quad
+            # del b_eid, b_eid_cpu
+            # del b_t, b_raw_msg
+            # del z_m, last_update
+            # del z
+            # # del pos_out, neg_out  # even if not always present, safe to delete
+            # torch.cuda.empty_cache()
+
+        all_y_preds = torch.cat(preds, dim=1)
+        del preds
+        # breakpoint()
+        for i in range(all_y_preds.size(0)):
+            y_pred = all_y_preds[i]  # shape [1000]
+            
+            input_dict = {
+                "y_pred_pos": np.array([y_pred[0].item()]),  # scalar wrapped in array
+                "y_pred_neg": np.array(y_pred[1:].cpu()),    # shape [999]
+                "eval_metric": [metric],
+            }
+            perf_list.append(evaluator.eval(input_dict)[metric])
+        if deliver_to == "neighbor":
+            root_ts = torch.cat([pos_t, pos_t], dim = 0).double().to(device)
+            root_nodes = torch.cat([pos_src, pos_dst], dim = 0).to(device)
+            n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+
+            bsrc = torch.stack([torch.arange(pos_src.shape[0]).to(device), pos_dst.to(device)])
+            bdst = torch.stack([torch.arange(pos_src.shape[0], 2*pos_src.shape[0]).to(device), pos_src.to(device)])
+            # bndst = torch.stack([torch.arange(2*pos_src.shape[0], 3*pos_src.shape[0]).to(device), torch.full((pos_src.shape[0],), -1).to(device)])
+            
+            od = torch.cat([ bsrc.T, bdst.T, neighbor_loader.id_to_pair], dim=0)
+            od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
+            tmp = od_updated[:, 0] % bs
+            od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
+            mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated,bs, max_seen_eid)
+
+            # b_eid = mem_graph_quad[3]#e_id[bmsk]
+            # b_eid_cpu = b_eid.cpu()
+            #     # breakpoint()
+            # b_t = dataset['data'].t[b_eid_cpu].to(device)
+            # b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+
+            # # breakpoint()
+            # # n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+            # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
+
+
+            triplet_keys = mem_graph_quad[[0, 1, 3]].T  # shape: [N, 3]
+            unique_keys, inverse_indices = torch.unique(triplet_keys, dim=0, return_inverse=True)
+
+                # Use unique EIDs to extract just the raw messages and timestamps once
+            unique_eids = unique_keys[:, 2]  # this is just eid column
+            b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
+            b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+            z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+                
+
+            store_eid = store_quad[3].cpu()
+            dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
+            model['memory'].update_state(n_id, z_m, last_update, store_quad, dirs.to(device))
+            # update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
+        else:
+            model['memory'].update_state_v2(
+                mem_graph_quad[2], remap, bs, 
+                pos_src.to(device), pos_dst.to(device), pos_t.to(device), pos_msg.to(device), 
+                n_id, last_update, z_m)        
+
+        max_seen_eid += bs
+        # print(max_seen_eid)
+    perf_metrics = float(torch.tensor(perf_list).mean())
+
+    return perf_metrics, max_seen_eid
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def train_with_custom_neg_sampler(targs):
     model = targs['model']
     model['memory'].train()

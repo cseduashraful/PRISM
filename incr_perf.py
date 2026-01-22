@@ -1,6 +1,6 @@
 from modules.data_utils import read_data, save_tci_data #, get_TCSR, get_TCSR_py, verify_tcsr
 from modules.recent_sampler import Recent_K_Sampler
-from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler
+from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler, online_test
 from modules.memory_module import DAATGNMemory, DAAAPANMemory, DA_APANMemory
 
 from modules.neg_sampler import NegLinkSamplerDest
@@ -160,6 +160,8 @@ def main():
         out_dir=outdir,#"preproc_out",
         num_shards=256,
     )
+
+
     pkl_path = "inference_preproc_out/"+folder_name+"_tci.pkl"
     print(folder_name)
     save_tci_data(tci_data, pkl_path)
@@ -352,15 +354,22 @@ def main():
         print("'loss' : ",losses,",")
         print("'time' : ",tims, ",")
         # ==================================================== Test
-        # if not debug:
-        #     # first, load the best model
-        #     early_stopper.load_checkpoint(model)
-        #     # final testing
-        #     start_test = timeit.default_timer()
-        #     perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+        if not debug:
+            # first, load the best model
+            early_stopper.load_checkpoint(model)
+            # final testing
+            start_test = timeit.default_timer()
+            perf_metric_test, max_seen_eid = online_test(targs, max_seen_id, split_mode="test")
+            end_test = timeit.default_timer()
 
-        #     print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
-        #     print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+            print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+            print(f"\tTest: {dataset['metric']}: {perf_metric_test: .4f}")
+            print(f"required time: {end_test-start_test}")
+
+
+
+
+
 
 
 if __name__ == "__main__":

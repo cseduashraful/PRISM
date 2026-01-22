@@ -156,7 +156,7 @@ import argparse
 if __name__ == "__main__":
     # save_model_dir = "/path/to/saved_models"
     # save_model_id = "SDA-TGN_wikipedia_1_0"
-    id = "2dd9a193"
+    id = "0948c53a"#"2dd9a193"
     custom_parser = argparse.ArgumentParser(add_help=False)
     # custom_parser.add_argument('--mxtt', type=int, default=48)
     # custom_parser.add_argument('--mxet', type=int, default=72)
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     # save_tci_data(tci_data_old, "inference_preproc_out/cache_2dd9a193tci.pkl")
     # breakpoint()
     
-    tci_data = load_tci_data(f"inference_preproc_out/cache_{id}tci.pkl")
+    tci_data = load_tci_data(f"inference_preproc_out/cache_{id}_tci.pkl")
     outdir = f"inference_preproc_out/cache_{id}"
     # breakpoint()
 

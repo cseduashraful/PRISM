@@ -37,6 +37,42 @@ class GRN_Stream:
 
         # self.data = data
 
+    def extend_tci(self, src_new, dst_new, ts_new, eid_new, duplicate_undirected=True):
+        # src_new/dst_new/eid_new: 1-D torch tensors or lists
+        # ts_new: 1-D torch tensor or list (float)
+        # Ensure Python lists for pybind vectors OR pass as lists/np as your binding expects.
+        # I assume your binding accepts python lists; adapt if needed.
+        
+        # Call the new extend that returns deltas
+        out, cids, pos, ts, eid, other = chunkio.extend_tci(
+            self.sampler_data,
+            src_new, dst_new, ts_new, eid_new,
+            duplicate_undirected
+        )
+
+        # Update sampler_data reference + GPU metadata tensors
+        self.sampler_data = out
+        self.chunk_map = torch.tensor(out.chunk_map, dtype=torch.long, device=self.device)
+        self.chunk_last_ts = torch.tensor(out.chunk_last_ts, dtype=torch.float64, device=self.device)
+
+        # Apply deltas to cache (CPU tensors required)
+        # If deltas are empty, skip.
+        # if cids.numel() > 0:
+        #     self.cache.apply_deltas_torch(cids, pos, ts, eid, other)
+
+        cids_t = torch.from_numpy(cids)          # int64 CPU
+        pos_t  = torch.from_numpy(pos)           # int64 CPU
+        ts_t   = torch.from_numpy(ts)            # float64 CPU
+        eid_t  = torch.from_numpy(eid)           # int64 CPU
+        oth_t  = torch.from_numpy(other)           # int64 CPU
+
+        if cids_t.numel() > 0:
+            # Option A: if you implemented apply_deltas_torch on TorchChunkCache
+            self.cache.apply_deltas_torch(cids_t, pos_t, ts_t, eid_t, oth_t)
+
+
+
+
     def _select_and_prefetch(self, root_node, root_ts):
         """Internal: Select chunks and async prefetch pinned CPU -> GPU"""
 

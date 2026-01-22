@@ -79,4 +79,8 @@ conda activate pyg
 # python prism_train.py --data tgbl-wiki --bs 2048  --lr 0.001 --deliver_to  self --num_epoch 30 --patience 30 --num_run 1
 # python prism_inference.py
 
-python prism_train.py --data toy --bs 2  --lr 0.001 --deliver_to  self --num_epoch 2 --patience 2 --num_run 1 --chunk_size 2
+# python prism_train.py --data toy --bs 2  --lr 0.001 --deliver_to  self --num_epoch 2 --patience 2 --num_run 1 --chunk_size 2
+
+# python prism_inference_v2.py
+
+python incr_perf.py --data tgbl-wiki --bs 1024  --lr 0.001 --deliver_to  self --num_epoch 2 --patience 2 --num_run 1 --chunk_size 256 --val_neg 1

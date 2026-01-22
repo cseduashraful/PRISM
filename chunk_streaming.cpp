@@ -69,6 +69,14 @@ struct DiskEdge {
     int64_t other;
 };
 
+struct ChunkDelta {
+    int64_t cid;     // chunk id
+    int64_t pos;     // position within chunk [0, chunk_size-1]
+    double  ts;
+    int64_t eid;
+    int64_t other;
+};
+
 static inline size_t shard_id_for(int64_t node, size_t num_shards) {
     return static_cast<size_t>(node) % num_shards;
 }
@@ -312,6 +320,126 @@ public:
         py::gil_scoped_acquire acquire; // reacquire GIL before returning
         return py::make_tuple(ts_out, eid_out, oth_out);
     }
+
+
+    // Apply deltas: only updates chunks that are already cached.
+    // Inputs are 1-D arrays of equal length:
+    //   cids[i], pos[i], ts[i], eid[i], other[i]
+    void apply_deltas_numpy(
+        py::array_t<int64_t, py::array::c_style | py::array::forcecast> cids,
+        py::array_t<int64_t, py::array::c_style | py::array::forcecast> pos,
+        py::array_t<double,  py::array::c_style | py::array::forcecast> ts,
+        py::array_t<int64_t, py::array::c_style | py::array::forcecast> eid,
+        py::array_t<int64_t, py::array::c_style | py::array::forcecast> oth
+    ) {
+        // Validate shapes
+        auto c = cids.unchecked<1>();
+        auto p = pos.unchecked<1>();
+        auto t = ts.unchecked<1>();
+        auto e = eid.unchecked<1>();
+        auto o = oth.unchecked<1>();
+
+        const ssize_t N = c.shape(0);
+        if (p.shape(0) != N || t.shape(0) != N || e.shape(0) != N || o.shape(0) != N) {
+            throw std::invalid_argument("apply_deltas: all inputs must have same length");
+        }
+
+        // Lock cache metadata + buffers
+        std::lock_guard<std::mutex> lock(mu_);
+
+        for (ssize_t i = 0; i < N; ++i) {
+            const int64_t cid = c(i);
+            const int64_t at  = p(i);
+
+            if (at < 0 || at >= chunk_size_) {
+                throw std::invalid_argument("apply_deltas: pos out of range");
+            }
+
+            auto it = id2slot_.find(cid);
+            if (it == id2slot_.end()) {
+                // Not cached => do nothing (per your design)
+                continue;
+            }
+
+            const size_t slot = it->second;
+            const size_t base = slot * (size_t)chunk_size_ + (size_t)at;
+
+            ts_buf_[base]  = t(i);
+            eid_buf_[base] = e(i);
+            oth_buf_[base] = o(i);
+        }
+    }
+
+#ifdef CHUNKIO_WITH_TORCH
+    // Apply deltas using Torch CPU tensors.
+    // cids, pos, eid, oth: int64 CPU 1-D
+    // ts: double CPU 1-D
+    void apply_deltas_torch(
+        const at::Tensor& cids,
+        const at::Tensor& pos,
+        const at::Tensor& ts,
+        const at::Tensor& eid,
+        const at::Tensor& oth
+    ) {
+        TORCH_CHECK(cids.device().is_cpu(), "cids must be on CPU");
+        TORCH_CHECK(pos.device().is_cpu(),  "pos must be on CPU");
+        TORCH_CHECK(ts.device().is_cpu(),   "ts must be on CPU");
+        TORCH_CHECK(eid.device().is_cpu(),  "eid must be on CPU");
+        TORCH_CHECK(oth.device().is_cpu(),  "other must be on CPU");
+
+        TORCH_CHECK(cids.scalar_type() == at::kLong, "cids must be torch.int64");
+        TORCH_CHECK(pos.scalar_type()  == at::kLong, "pos must be torch.int64");
+        TORCH_CHECK(ts.scalar_type()   == at::kDouble, "ts must be torch.float64");
+        TORCH_CHECK(eid.scalar_type()  == at::kLong, "eid must be torch.int64");
+        TORCH_CHECK(oth.scalar_type()  == at::kLong, "other must be torch.int64");
+
+        TORCH_CHECK(cids.dim() == 1 && pos.dim() == 1 && ts.dim() == 1 && eid.dim() == 1 && oth.dim() == 1,
+                    "apply_deltas_torch: all inputs must be 1-D");
+        TORCH_CHECK(cids.numel() == pos.numel() &&
+                    cids.numel() == ts.numel() &&
+                    cids.numel() == eid.numel() &&
+                    cids.numel() == oth.numel(),
+                    "apply_deltas_torch: all inputs must have same length");
+
+        auto cids_c = cids.contiguous();
+        auto pos_c  = pos.contiguous();
+        auto ts_c   = ts.contiguous();
+        auto eid_c  = eid.contiguous();
+        auto oth_c  = oth.contiguous();
+
+        const int64_t N = cids_c.numel();
+
+        const int64_t* cids_ptr = cids_c.data_ptr<int64_t>();
+        const int64_t* pos_ptr  = pos_c.data_ptr<int64_t>();
+        const double*  ts_ptr   = ts_c.data_ptr<double>();
+        const int64_t* eid_ptr  = eid_c.data_ptr<int64_t>();
+        const int64_t* oth_ptr  = oth_c.data_ptr<int64_t>();
+
+        std::lock_guard<std::mutex> lock(mu_);
+
+        for (int64_t i = 0; i < N; ++i) {
+            const int64_t cid = cids_ptr[i];
+            const int64_t at  = pos_ptr[i];
+
+            if (at < 0 || at >= chunk_size_) {
+                throw std::invalid_argument("apply_deltas_torch: pos out of range");
+            }
+
+            auto it = id2slot_.find(cid);
+            if (it == id2slot_.end()) {
+                // Not cached => do nothing (same policy as numpy)
+                continue;
+            }
+
+            const size_t slot = it->second;
+            const size_t idx  = slot * (size_t)chunk_size_ + (size_t)at;
+
+            ts_buf_[idx]  = ts_ptr[i];
+            eid_buf_[idx] = eid_ptr[i];
+            oth_buf_[idx] = oth_ptr[i];
+        }
+    }
+#endif
 
 #ifdef CHUNKIO_WITH_TORCH
     // PyTorch API: ids is torch.LongTensor on CPU, 1-D and contiguous
@@ -580,15 +708,16 @@ static inline void append_new_chunk_with_first_event(
 
 //==== end increment
 //== increment 2
-
-ChunkResultLite extend_streaming_latestk_ordered_reuse(
+static ChunkResultLite extend_impl_with_deltas(
     const ChunkResultLite& prev,
     const std::vector<int64_t>& src_new,
     const std::vector<int64_t>& dst_new,
     const std::vector<double>&  ts_new,
     const std::vector<int64_t>& eid_new,
-    bool duplicate_undirected = true
+    std::vector<ChunkDelta>& deltas,
+    bool duplicate_undirected
 ) {
+
     if (src_new.size() != dst_new.size() || src_new.size() != ts_new.size() || src_new.size() != eid_new.size())
         throw std::invalid_argument("extend_latestk: input arrays must have same length");
 
@@ -604,6 +733,9 @@ ChunkResultLite extend_streaming_latestk_ordered_reuse(
     std::fstream eid_io(eid_path,   std::ios::in | std::ios::out | std::ios::binary);
     std::fstream oth_io(other_path, std::ios::in | std::ios::out | std::ios::binary);
     if (!ts_io || !eid_io || !oth_io) throw std::runtime_error("extend_latestk: failed to open bin files");
+
+    // std::vector<ChunkDelta> deltas;
+    // deltas.reserve(src_new.size() * 2);
 
     struct Rec { double ts; int64_t eid; int64_t other; };
     std::unordered_map<int64_t, std::vector<Rec>> by_node;
@@ -676,6 +808,169 @@ ChunkResultLite extend_streaming_latestk_ordered_reuse(
 
             // Case B: Tail chunk exists and has free space -> write into it in-place.
             if (tail_fill < chunk_size) {
+                deltas.push_back(ChunkDelta{tail_cid, tail_fill, r.ts, r.eid, r.other});
+
+                write_entry_inplace(ts_io, eid_io, oth_io, chunk_size, tail_cid, tail_fill, r.ts, r.eid, r.other);
+                tail_fill++;
+                row_last[(size_t)(count - 1)] = r.ts;
+
+                ++idx;
+                continue;
+            }
+
+            // From here: tail is full, so we must get a "fresh" tail chunk (append or evict+reuse),
+            // then write current record as the first entry in that new tail chunk.
+
+            // Case C: We still have capacity (<K chunks) -> append a new chunk and make it the tail.
+            if (count < K) {
+                const int64_t new_cid = out.total_chunks;
+                append_new_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, new_cid, r.ts, r.eid, r.other);
+                out.total_chunks++;
+
+                row_map[(size_t)count]  = new_cid;
+                row_last[(size_t)count] = r.ts;
+
+                count++;
+                tail_cid  = new_cid;
+                tail_fill = 1;
+
+                ++idx;
+                continue;
+            }
+
+            // Case D: count == K -> evict oldest (index 0), shift left, reuse evicted cid as new tail.
+            {
+                const int64_t evict_cid = row_map[0];
+
+                for (int64_t i = 0; i < K - 1; ++i) {
+                    row_map[(size_t)i]  = row_map[(size_t)(i + 1)];
+                    row_last[(size_t)i] = row_last[(size_t)(i + 1)];
+                }
+
+                overwrite_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, evict_cid, r.ts, r.eid, r.other);
+
+                row_map[(size_t)(K - 1)]  = evict_cid;
+                row_last[(size_t)(K - 1)] = r.ts;
+
+                tail_cid  = evict_cid;
+                tail_fill = 1;
+
+                ++idx;
+                continue;
+            }
+        }
+    }
+
+
+    ts_io.flush(); eid_io.flush(); oth_io.flush();
+    return out;
+
+}
+
+
+
+
+
+ChunkResultLite extend_streaming_latestk_ordered_reuse(
+    const ChunkResultLite& prev,
+    const std::vector<int64_t>& src_new,
+    const std::vector<int64_t>& dst_new,
+    const std::vector<double>&  ts_new,
+    const std::vector<int64_t>& eid_new,
+    bool duplicate_undirected = true
+) {
+    if (src_new.size() != dst_new.size() || src_new.size() != ts_new.size() || src_new.size() != eid_new.size())
+        throw std::invalid_argument("extend_latestk: input arrays must have same length");
+
+    ChunkResultLite out = prev;  // copy metadata
+    const int64_t chunk_size = out.chunk_size;
+    const int64_t K = (int64_t)out.chunk_map[0].size();  // max_chunk_per_node
+
+    const std::string ts_path    = out.out_dir + "/ts.bin";
+    const std::string eid_path   = out.out_dir + "/eid.bin";
+    const std::string other_path = out.out_dir + "/other.bin";
+
+    std::fstream ts_io(ts_path,     std::ios::in | std::ios::out | std::ios::binary);
+    std::fstream eid_io(eid_path,   std::ios::in | std::ios::out | std::ios::binary);
+    std::fstream oth_io(other_path, std::ios::in | std::ios::out | std::ios::binary);
+    if (!ts_io || !eid_io || !oth_io) throw std::runtime_error("extend_latestk: failed to open bin files");
+
+    std::vector<ChunkDelta> deltas;
+    deltas.reserve(src_new.size() * 2);
+
+    struct Rec { double ts; int64_t eid; int64_t other; };
+    std::unordered_map<int64_t, std::vector<Rec>> by_node;
+    by_node.reserve(src_new.size() * 2);
+
+    for (size_t i = 0; i < src_new.size(); ++i) {
+        int64_t u = src_new[i], v = dst_new[i];
+        double  t = ts_new[i];
+        int64_t e = eid_new[i];
+
+        by_node[v].push_back(Rec{t, e, u});
+        if (duplicate_undirected && u != v) {
+            by_node[u].push_back(Rec{t, e, v});
+        }
+    }
+
+
+
+    // Drop-in replacement: per-node processing inside extend_streaming_latestk_ordered_reuse()
+    // Key fix: ALWAYS keep filling the current tail chunk (tail_fill < chunk_size) before creating/evicting a new one.
+    // Also: after appending/reusing a chunk, we keep tail_cid + tail_fill updated so subsequent records pack correctly.
+
+    for (auto& kv : by_node) {
+        const int64_t node = kv.first;
+        auto& recs = kv.second;
+        std::sort(recs.begin(), recs.end(), [](const Rec& a, const Rec& b){ return a.ts < b.ts; });
+
+        auto& row_map  = out.chunk_map.at((size_t)node);
+        auto& row_last = out.chunk_last_ts.at((size_t)node);
+
+        int64_t count = num_chunks_in_row(row_map);  // current number of chunks (<=K)
+
+        // Track tail chunk id + how many entries are already filled in it.
+        int64_t tail_cid  = -1;
+        int64_t tail_fill = 0;
+
+        if (count > 0) {
+            tail_cid  = row_map[(size_t)(count - 1)];
+            tail_fill = tail_fill_from_disk(ts_path, eid_path, other_path, chunk_size, tail_cid);
+
+            // monotonic guard: new timestamps must be >= last existing ts in tail (if any)
+            if (tail_fill > 0) {
+                const double last_ts = row_last[(size_t)(count - 1)];
+                if (!recs.empty() && recs.front().ts < last_ts) {
+                    throw std::runtime_error("extend_latestk: non-monotonic timestamps for node " + std::to_string(node));
+                }
+            }
+        }
+
+        // Process all new records for this node, packing into the tail chunk when possible.
+        for (size_t idx = 0; idx < recs.size(); /* increment inside */) {
+            const auto& r = recs[idx];
+
+            // Case A: No chunks yet -> create first chunk and write r at pos 0.
+            if (count == 0) {
+                const int64_t new_cid = out.total_chunks;
+                append_new_chunk_with_first_event(ts_io, eid_io, oth_io, chunk_size, new_cid, r.ts, r.eid, r.other);
+                out.total_chunks++;
+
+                row_map[0]  = new_cid;
+                row_last[0] = r.ts;
+
+                count     = 1;
+                tail_cid  = new_cid;
+                tail_fill = 1;
+
+                ++idx;
+                continue;
+            }
+
+            // Case B: Tail chunk exists and has free space -> write into it in-place.
+            if (tail_fill < chunk_size) {
+                deltas.push_back(ChunkDelta{tail_cid, tail_fill, r.ts, r.eid, r.other});
+
                 write_entry_inplace(ts_io, eid_io, oth_io, chunk_size, tail_cid, tail_fill, r.ts, r.eid, r.other);
                 tail_fill++;
                 row_last[(size_t)(count - 1)] = r.ts;
@@ -911,6 +1206,61 @@ PYBIND11_MODULE(chunkio, m) {
       py::arg("total_chunks"),
       py::arg("out_dir"));
 
+
+
+    m.def("extend_tci",
+    [](const ChunkResultLite& prev,
+        const std::vector<int64_t>& src_new,
+        const std::vector<int64_t>& dst_new,
+        const std::vector<double>&  ts_new,
+        const std::vector<int64_t>& eid_new,
+        bool duplicate_undirected) {
+
+        std::vector<ChunkDelta> deltas;
+        deltas.reserve(src_new.size() * 2);
+
+        ChunkResultLite out = extend_impl_with_deltas(
+            prev, src_new, dst_new, ts_new, eid_new, deltas, duplicate_undirected
+        );
+
+        // Convert deltas to NumPy 1-D arrays
+        const ssize_t N = (ssize_t)deltas.size();
+
+        py::array_t<int64_t> cids({N});
+        py::array_t<int64_t> pos ({N});
+        py::array_t<double>  ts  ({N});
+        py::array_t<int64_t> eid ({N});
+        py::array_t<int64_t> oth ({N});
+
+        auto cids_m = cids.mutable_unchecked<1>();
+        auto pos_m  = pos.mutable_unchecked<1>();
+        auto ts_m   = ts.mutable_unchecked<1>();
+        auto eid_m  = eid.mutable_unchecked<1>();
+        auto oth_m  = oth.mutable_unchecked<1>();
+
+        for (ssize_t i = 0; i < N; ++i) {
+            const auto& d = deltas[(size_t)i];
+            cids_m(i) = d.cid;
+            pos_m(i)  = d.pos;
+            ts_m(i)   = d.ts;
+            eid_m(i)  = d.eid;
+            oth_m(i)  = d.other;
+        }
+
+        return py::make_tuple(out, cids, pos, ts, eid, oth);
+    },
+    py::arg("prev"),
+    py::arg("src_new"), py::arg("dst_new"), py::arg("ts_new"), py::arg("eid_new"),
+    py::arg("duplicate_undirected") = true,
+    R"pbdoc(
+    Extend an existing TCI and also return deltas for tail in-place writes.
+    Returns:
+    (out, cids, pos, ts, eid, other)
+    Where deltas correspond only to in-place tail writes performed during extend.
+    )pbdoc"
+    );
+
+
     m.def("extend_streaming_latestk_ordered_reuse", &extend_streaming_latestk_ordered_reuse,
         py::arg("prev"),
         py::arg("src_new"), py::arg("dst_new"), py::arg("ts_new"), py::arg("eid_new"),
@@ -983,6 +1333,9 @@ PYBIND11_MODULE(chunkio, m) {
              py::arg("out_dir"), py::arg("chunk_size"), py::arg("capacity") = 100)
         .def("get_chunks", &ChunkCache::get_chunks_numpy, py::arg("ids"),
              R"pbdoc(Return (ts, eid, other) as NumPy arrays of shape (N, chunk_size))pbdoc")
+        .def("apply_deltas", &ChunkCache::apply_deltas_numpy,
+            py::arg("cids"), py::arg("pos"), py::arg("ts"), py::arg("eid"), py::arg("other"),
+            R"pbdoc(Apply in-place updates to cached chunks. Arrays are 1-D, same length.)pbdoc")
         .def("clear", &ChunkCache::clear)
         .def_property_readonly("size", &ChunkCache::size)
         .def_property_readonly("capacity", &ChunkCache::capacity)
@@ -994,7 +1347,11 @@ PYBIND11_MODULE(chunkio, m) {
         .def(py::init<const std::string&, int64_t, size_t>(),
              py::arg("out_dir"), py::arg("chunk_size"), py::arg("capacity") = 100)
         .def("get_chunks_torch", &ChunkCache::get_chunks_torch, py::arg("ids"),
-             R"pbdoc(Return (ts, eid, other) as torch tensors of shape (N, chunk_size))pbdoc");
+             R"pbdoc(Return (ts, eid, other) as torch tensors of shape (N, chunk_size))pbdoc")
+        .def("apply_deltas_torch", &ChunkCache::apply_deltas_torch,
+             py::arg("cids"), py::arg("pos"), py::arg("ts"), py::arg("eid"), py::arg("other"),
+             R"pbdoc(Apply in-place updates to cached chunks. Torch CPU tensors, 1-D, same length.)pbdoc");
+
 #endif
 }
 
