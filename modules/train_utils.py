@@ -5,6 +5,24 @@ from tqdm import tqdm
 import mem_update_graph
 
 
+def _map_query_eids_to_batch_positions(query_eids: torch.Tensor, batch_eids: torch.Tensor) -> torch.Tensor:
+    # Returns batch-local positions [0, bs-1] for each query eid, or -1 if not found.
+    query_cpu = query_eids.detach().cpu().long()
+    batch_cpu = batch_eids.detach().cpu().long()
+    if batch_cpu.numel() == 0:
+        return torch.full_like(query_cpu, -1)
+
+    sorted_batch, sort_idx = torch.sort(batch_cpu)
+    pos = torch.searchsorted(sorted_batch, query_cpu)
+    found = pos < sorted_batch.numel()
+    safe_pos = torch.clamp(pos, max=max(sorted_batch.numel() - 1, 0))
+    found = found & (sorted_batch[safe_pos] == query_cpu)
+
+    rel = torch.full_like(query_cpu, -1)
+    rel[found] = sort_idx[safe_pos[found]]
+    return rel
+
+
 def train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler, known_dsts = None):
     bs = pos_dst.shape[0]
     if known_dsts is not None and neg_sampler is None:
@@ -392,8 +410,20 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
 
 
 
-def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device):
-    bmsk = e_id>max_seen_eid
+def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device, current_batch_eids=None):
+    e_id_cpu = e_id.detach().cpu().long()
+    batch_eids_cpu = None if current_batch_eids is None else current_batch_eids.detach().cpu().long().view(-1)
+    using_explicit_batch_eids = batch_eids_cpu is not None and batch_eids_cpu.numel() == bs
+
+    if using_explicit_batch_eids:
+        bmsk = torch.isin(e_id_cpu, batch_eids_cpu)
+    else:
+        bmsk = e_id_cpu > max_seen_eid
+    if e_id.numel() != edge_index.shape[1]:
+        raise RuntimeError(
+            f"Sampler contract violated: len(e_id)={e_id.numel()} != edge_index.size(1)={edge_index.shape[1]}"
+        )
+
     bdst = torch.arange(bs*2)
     bsrc = torch.cat([torch.arange(bs, bs*2), torch.arange(bs)])
     bedge = torch.stack([bsrc, bdst]).to(device)
@@ -409,11 +439,24 @@ def getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_ei
     mem_graph_triplet = torch.stack([updated_ball[:bedge.shape[1]], updated_ball[bedge.shape[1]:], bedge[1]])
 
     b_edge_index = edge_index[:,bmsk]
-    new_eids = torch.arange(max_seen_eid+1, max_seen_eid+1+bs)
+    if using_explicit_batch_eids:
+        new_eids = batch_eids_cpu
+    else:
+        new_eids = torch.arange(max_seen_eid+1, max_seen_eid+1+bs)
 
-    mem_eid = torch.cat([new_eids, new_eids, e_id[bmsk]])
+    mem_eid = torch.cat([new_eids, new_eids, e_id_cpu[bmsk]])
     del_addr = torch.cat([mem_graph_triplet[2, :], b_edge_index[1]])
-    relative_mem_id = mem_eid - (max_seen_eid + 1)
+    if using_explicit_batch_eids:
+        relative_mem_id = _map_query_eids_to_batch_positions(mem_eid, batch_eids_cpu)
+    else:
+        relative_mem_id = mem_eid - (max_seen_eid + 1)
+    if relative_mem_id.numel() > 0:
+        rel_min = int(relative_mem_id.min().item())
+        rel_max = int(relative_mem_id.max().item())
+        if rel_min < 0 or rel_max >= mem_graph_triplet.shape[1]:
+            raise RuntimeError(
+                f"relative_mem_id out of bounds (min={rel_min}, max={rel_max}) for mem_graph_triplet width={mem_graph_triplet.shape[1]}"
+            )
     # breakpoint()
     mem_graph_quad_tmp =  torch.vstack([mem_graph_triplet[:2,relative_mem_id], del_addr, mem_eid.to(device)])
     direction = del_addr<bs
@@ -467,10 +510,15 @@ def train(targs, max_seen_id):
     deliver_to = targs['deliver_to']
     decoder = targs['decoder']
     embedding = targs['embedding']
+    train_batch_limit = targs.get('train_batch_limit')
+    if train_batch_limit is not None and train_batch_limit <= 0:
+        train_batch_limit = None
 
 
     total_loss = 0
     max_seen_eid = max_seen_id
+    processed_batches = 0
+    processed_events = 0
 
     for batch in train_loader:
         batch = batch.to(device)
@@ -583,7 +631,11 @@ def train(targs, max_seen_id):
 
 
         else:
-            mem_graph_quad_uf  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
+            batch_eids = getattr(batch, 'eid', None)
+            mem_graph_quad_uf  = getMem_graph(
+                model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid,
+                src, pos_dst, device, current_batch_eids=batch_eids
+            )
             mem_graph_quad = mem_graph_quad_uf
             # breakpoint()
 
@@ -677,8 +729,14 @@ def train(targs, max_seen_id):
         
         
         max_seen_eid += batch.num_events
-        # break
-    return total_loss/dataset['train_length'], max_seen_eid
+        processed_batches += 1
+        processed_events += batch.num_events
+
+        if train_batch_limit is not None and processed_batches >= train_batch_limit:
+            break
+
+    denom = processed_events if processed_events > 0 else dataset['train_length']
+    return total_loss/denom, max_seen_eid
 
 
 
@@ -744,6 +802,8 @@ def test_new(targs, max_seen_id, split_mode):
         num_neg = neg_batch_tensor_T.shape[0]
         bs = pos_src.shape[0]
         preds = []
+        pos_src_dev = pos_src.to(device)
+        pos_dst_dev = pos_dst.to(device)
 
         for i in range(num_neg):
             # print(i)
@@ -803,7 +863,16 @@ def test_new(targs, max_seen_id, split_mode):
             else:
 
 
-                mem_graph_quad = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, pos_src, pos_dst, device)
+                if e_id.numel() != edge_index.shape[1]:
+                    raise RuntimeError(
+                        f"{split_mode}: sampler contract violated before getMem_graph: "
+                        f"len(e_id)={e_id.numel()} edge_index_cols={edge_index.shape[1]}"
+                    )
+                batch_eids = getattr(pos_batch, 'eid', None)
+                mem_graph_quad = getMem_graph(
+                    model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid,
+                    pos_src_dev, pos_dst_dev, device, current_batch_eids=batch_eids
+                )
                 b_eid = mem_graph_quad[3]#e_id[bmsk]
                 b_eid_cpu = b_eid.cpu()
                 b_t = dataset['data'].t[b_eid_cpu].to(device)
@@ -813,14 +882,14 @@ def test_new(targs, max_seen_id, split_mode):
                 z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
 
 
-                remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , pos_src, pos_dst)
+                remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , pos_src_dev, pos_dst_dev)
                 remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
                 remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
 
                 z_m = torch.cat([z_m[remap], z_m[3*bs:]])
                 last_update = torch.cat([last_update[remap], last_update[3*bs:]])
 
-                ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , pos_src, pos_dst)
+                ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , pos_src_dev, pos_dst_dev)
                 updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
                 edge_index = torch.stack([updated_src, edge_index[1,:]])
 

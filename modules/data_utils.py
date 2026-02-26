@@ -14,6 +14,8 @@ def read_data(DATA, BATCH_SIZE, load_neg_sampler = True):
     val_mask = dataset.val_mask
     test_mask = dataset.test_mask
     data = dataset.get_TemporalData()
+    # Preserve dataset-global event IDs across train/val/test slices for TGB-style eval logic.
+    data.eid = torch.arange(data.num_events, dtype=torch.long)
     metric = dataset.eval_metric
 
     train_data = data[train_mask]

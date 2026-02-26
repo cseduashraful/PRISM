@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -c 8  # Number of Cores per Task
 #SBATCH -p gpu  # Partition
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH -G 1  # Number of GPUs
 
-#SBATCH --constraint=2080ti
-#SBATCH -t 5-00:00:00  # Job time limit
+#SBATCH --constraint=a100
+#SBATCH -t 2-00:00:00  # Job time limit
 
 #SBATCH -o slurm-%j.out  # %j = job ID
 #SBATCH -q long
@@ -60,7 +60,7 @@ conda activate pyg
 # python tncn.py --data tgbl-wiki --bs 16384 --num_epoch 200 --patience 200 --num_run 1 --lr 0.0001
 
 #7-6-2026
-# python main.py --decoder NCN --data tgbl-flight --bs 8192 --num_epoch 200 --patience 200 --num_run 1 --lr 0.001
+python main.py  --data tgbl-review --bs 4096 --num_epoch 30 --patience 10 --num_run 1 --lr 0.001
 
 
 #7-9-25

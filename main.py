@@ -46,6 +46,8 @@ def main():
     custom_parser.add_argument('--chunk_size', type=int, default=256)
     custom_parser.add_argument('--skip_cnt', type=int, default=16)
     custom_parser.add_argument('--m_pass', type=int, default=3)
+    custom_parser.add_argument('--train_batch_limit', type=int, default=0,
+                               help='If >0, train only this many batches per epoch (fast repro/debug).')
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -64,10 +66,10 @@ def main():
     args.chunk_size = custom_args.chunk_size
     args.skip_cnt = custom_args.skip_cnt
     args.m_pass = custom_args.m_pass 
+    args.train_batch_limit = custom_args.train_batch_limit
 
     # args.num_epoch =  1000
     args.num_run = 1
-    args.patience = args.num_epoch
 
     print("INFO: Arguments:", args)
 
@@ -228,6 +230,7 @@ def main():
             'embedding': args.embedding,
             'val_neg': args.val_neg,
             'known_dsts': known_dsts,
+            'train_batch_limit': args.train_batch_limit,
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()
