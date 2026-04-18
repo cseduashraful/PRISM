@@ -207,6 +207,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-gpu-utilization", action="store_true")
     parser.add_argument("--skip-validation", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
+        "--tensor-store-mode",
+        choices=["off", "on", "verify"],
+        default="on",
+        help=(
+            "Message-store backend for DAATGNMemory: "
+            "'on' enables optimized tensor-backed read path, "
+            "'verify' checks optimized vs reference parity at runtime, "
+            "'off' uses reference path only."
+        ),
+    )
+    parser.add_argument(
         "--cache-data-on-gpu",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -686,12 +697,14 @@ def prepare_batch(
             unique_keys, inverse_indices = torch.unique(mem_graph_quad[[0, 1, 3]].T, dim=0, return_inverse=True)
             store_eid = store_quad[3].long()
             unique_eids = unique_keys[:, 2].long()
-            store_eid_cpu = store_eid.cpu().long()
-            unique_eids_cpu = unique_eids.cpu().long()
             if cached_src is not None:
                 dirs = cached_src[store_eid] == n_id[store_quad[0]]
                 dirs_cpu = None
+                store_eid_cpu = None
+                unique_eids_cpu = None
             else:
+                store_eid_cpu = store_eid.cpu().long()
+                unique_eids_cpu = unique_eids.cpu().long()
                 dirs = None
                 dirs_cpu = data.src[store_eid_cpu] == n_id[store_quad[0]].cpu()
             preprocess_payload = {
@@ -720,10 +733,11 @@ def prepare_batch(
                 device,
             )
             b_eid = mem_graph_quad[3].long()
-            b_eid_cpu = b_eid.cpu().long()
             if cached_src is not None:
                 b_isrc = n_id[mem_graph_quad[1]] == cached_src[b_eid]
+                b_eid_cpu = None
             else:
+                b_eid_cpu = b_eid.cpu().long()
                 b_isrc = (n_id[mem_graph_quad[1]].cpu() == data.src[b_eid_cpu]).to(device)
             preprocess_payload = {
                 "mem_graph_quad": mem_graph_quad,
@@ -1153,7 +1167,9 @@ def main():
     args = parse_args()
     ensure_prism_runtime_available()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    os.environ["PRISM_TENSOR_STORE_MODE"] = args.tensor_store_mode
     os.chdir(REPO_ROOT)
+    print(f"[info] PRISM tensor store mode: {args.tensor_store_mode}")
 
     device = get_device(args)
     dataset_internal, dataset_output = resolve_dataset_names(args.dataset)

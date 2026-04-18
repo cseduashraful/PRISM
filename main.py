@@ -46,6 +46,26 @@ def main():
     custom_parser.add_argument('--chunk_size', type=int, default=256)
     custom_parser.add_argument('--skip_cnt', type=int, default=16)
     custom_parser.add_argument('--m_pass', type=int, default=3)
+    custom_parser.add_argument(
+        '--tensor-store-mode',
+        choices=['off', 'on', 'verify'],
+        default='on',
+        help=(
+            "Message-store backend for DAATGNMemory: "
+            "'on' enables optimized tensor-backed path (default), "
+            "'verify' checks optimized vs reference parity at runtime, "
+            "'off' uses reference path only."
+        ),
+    )
+    custom_parser.add_argument(
+        '--cache-data-on-gpu',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Cache frequently indexed dataset tensors (t/msg/src) on GPU once at startup "
+            "to reduce per-iteration host->device transfers."
+        ),
+    )
 
     custom_args, remaining_argv = custom_parser.parse_known_args()
 
@@ -64,12 +84,19 @@ def main():
     args.chunk_size = custom_args.chunk_size
     args.skip_cnt = custom_args.skip_cnt
     args.m_pass = custom_args.m_pass 
+    args.tensor_store_mode = custom_args.tensor_store_mode
+    args.cache_data_on_gpu = custom_args.cache_data_on_gpu
+
+    # Keep regular training/eval behavior aligned with benchmark_prism defaults.
+    os.environ["PRISM_TENSOR_STORE_MODE"] = args.tensor_store_mode
 
     # args.num_epoch =  1000
     args.num_run = 1
     args.patience = args.num_epoch
 
     print("INFO: Arguments:", args)
+    print(f"INFO: PRISM tensor store mode: {args.tensor_store_mode}")
+    print(f"INFO: Cache data on GPU: {args.cache_data_on_gpu}")
 
     DATA = args.data
     LR =args.lr# max(args.lr, (args.lr*args.bs)/200)
@@ -100,6 +127,23 @@ def main():
     # breakpoint()
     dataset = read_data(DATA, BATCH_SIZE, load_neg_sampler = args.load_ns)
     data = dataset['data']
+    data_cache = {'t': None, 'msg': None, 'src': None}
+    if args.cache_data_on_gpu and device.type == "cuda":
+        try:
+            data_cache['t'] = data.t.to(device)
+            data_cache['msg'] = data.msg.to(device)
+            data_cache['src'] = data.src.to(device)
+            print("INFO: Cached dataset tensors on GPU (t/msg/src).")
+        except RuntimeError as exc:
+            if "out of memory" not in str(exc).lower():
+                raise
+            print(
+                "WARNING: Could not cache dataset tensors on GPU (OOM). "
+                "Falling back to per-iteration CPU->GPU copies."
+            )
+            torch.cuda.empty_cache()
+    elif args.cache_data_on_gpu and device.type != "cuda":
+        print("INFO: cache-data-on-gpu requested but CUDA is unavailable; using CPU tensors.")
     unique_destination_nodes =  torch.unique(data.dst)
     min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
 
@@ -228,6 +272,7 @@ def main():
             'embedding': args.embedding,
             'val_neg': args.val_neg,
             'known_dsts': known_dsts,
+            'data_cache': data_cache,
         }
         val_perf_list = []
         start_train_val = timeit.default_timer()

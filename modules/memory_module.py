@@ -1,4 +1,5 @@
 import copy
+import os
 from typing import Callable, Dict, Tuple
 
 import torch
@@ -60,8 +61,17 @@ class DAATGNMemory(torch.nn.Module):
         self.register_buffer("last_update", last_update)
         self.register_buffer("_assoc", torch.empty(num_nodes, dtype=torch.long))
 
+        # `off`    : original dict path only.
+        # `on`     : tensor-only fast path (no dict maintenance overhead).
+        # `verify` : maintain both stores and assert parity each call.
+        self.tensor_store_mode = os.getenv("PRISM_TENSOR_STORE_MODE", "off").strip().lower()
+        if self.tensor_store_mode not in {"off", "on", "verify"}:
+            self.tensor_store_mode = "off"
+
         self.msg_s_store = {}
         self.msg_d_store = {}
+        self.msg_s_tensor_store = {}
+        self.msg_d_tensor_store = {}
 
         self.reset_parameters()
 
@@ -216,11 +226,32 @@ class DAATGNMemory(torch.nn.Module):
     #         self._update_memory(n_id)
 
     def _reset_message_store(self):
+        if self.tensor_store_mode == "on":
+            # In speed mode we bypass dict-based message store entirely.
+            self.msg_s_store = {}
+            self.msg_d_store = {}
+        else:
+            i = self.memory.new_empty((0,), device=self.device, dtype=torch.long)
+            msg = self.memory.new_empty((0, self.raw_msg_dim), device=self.device)
+            # Message store format: (src, dst, t, msg)
+            self.msg_s_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
+            self.msg_d_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
+        if self.tensor_store_mode in {"on", "verify"}:
+            self.msg_s_tensor_store = self._empty_tensor_store()
+            self.msg_d_tensor_store = self._empty_tensor_store()
+
+    def _empty_tensor_store(self):
         i = self.memory.new_empty((0,), device=self.device, dtype=torch.long)
+        t = self.memory.new_empty((0,), device=self.device, dtype=self.last_update.dtype)
         msg = self.memory.new_empty((0, self.raw_msg_dim), device=self.device)
-        # Message store format: (src, dst, t, msg)
-        self.msg_s_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
-        self.msg_d_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
+        return {"nodes": i, "src": i, "dst": i, "t": t, "raw_msg": msg}
+
+    def _empty_msg_result(self, msg_module: Callable):
+        msg_dim = getattr(msg_module, "out_channels", self.raw_msg_dim + 2 * self.memory_dim + self.time_dim)
+        i = self.memory.new_empty((0,), device=self.device, dtype=torch.long)
+        t = self.memory.new_empty((0,), device=self.device, dtype=self.last_update.dtype)
+        msg = self.memory.new_empty((0, msg_dim), device=self.device)
+        return msg, t, i, i
 
     def _update_memory(self, n_id: Tensor):
         memory, last_update = self._get_updated_memory(n_id)
@@ -357,7 +388,13 @@ class DAATGNMemory(torch.nn.Module):
         raw_msg: Tensor,
         msg_store: TGNMessageStoreType,
     ):
-        
+        if self.tensor_store_mode == "on":
+            n_id_sorted, perm = src.sort()
+            touched_nodes = n_id_sorted.unique_consecutive()
+            tensor_store = self.msg_s_tensor_store if msg_store is self.msg_s_store else self.msg_d_tensor_store
+            self._update_tensor_store(tensor_store, src, dst, t, raw_msg, touched_nodes, perm)
+            return
+
         n_id, perm = src.sort()
         n_id, count = n_id.unique_consecutive(return_counts=True)
         # breakpoint()
@@ -376,23 +413,106 @@ class DAATGNMemory(torch.nn.Module):
         #     node_id = src_cpu[i].item()
         #     msg_store[node_id] = (src[i], dst[i], t[i], raw_msg[i])
 
-    def _compute_msg(
+        if self.tensor_store_mode == "verify":
+            tensor_store = self.msg_s_tensor_store if msg_store is self.msg_s_store else self.msg_d_tensor_store
+            self._update_tensor_store(tensor_store, src, dst, t, raw_msg, n_id, perm)
+
+    def _update_tensor_store(
+        self,
+        tensor_store,
+        src: Tensor,
+        dst: Tensor,
+        t: Tensor,
+        raw_msg: Tensor,
+        touched_nodes: Tensor,
+        perm: Tensor,
+    ):
+        if src.numel() == 0:
+            return
+        # Match dict-path per-node write ordering exactly.
+        src_new = src[perm]
+        dst_new = dst[perm]
+        t_new = t[perm]
+        raw_new = raw_msg[perm]
+
+        store_nodes = tensor_store["nodes"]
+        keep_mask = ~torch.isin(store_nodes, touched_nodes) if store_nodes.numel() > 0 else store_nodes.new_zeros((0,), dtype=torch.bool)
+
+        kept_nodes = store_nodes[keep_mask]
+        kept_src = tensor_store["src"][keep_mask]
+        kept_dst = tensor_store["dst"][keep_mask]
+        kept_t = tensor_store["t"][keep_mask]
+        kept_raw = tensor_store["raw_msg"][keep_mask]
+
+        tensor_store["nodes"] = torch.cat([kept_nodes, src_new], dim=0)
+        tensor_store["src"] = torch.cat([kept_src, src_new], dim=0)
+        tensor_store["dst"] = torch.cat([kept_dst, dst_new], dim=0)
+        tensor_store["t"] = torch.cat([kept_t, t_new], dim=0)
+        tensor_store["raw_msg"] = torch.cat([kept_raw, raw_new], dim=0)
+
+    def _compute_msg_from_dict(
         self, n_id: Tensor, msg_store: TGNMessageStoreType, msg_module: Callable
     ):
         data = [msg_store[i] for i in n_id.tolist()]
-        # breakpoint()
         src, dst, t, raw_msg = list(zip(*data))
         src = torch.cat(src, dim=0)
         dst = torch.cat(dst, dim=0)
         t = torch.cat(t, dim=0)
         raw_msg = torch.cat(raw_msg, dim=0)
-        # breakpoint()
         t_rel = t - self.last_update[src]
         t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
-
         msg = msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
-
         return msg, t, src, dst
+
+    def _compute_msg_from_tensor(
+        self, n_id: Tensor, tensor_store, msg_module: Callable
+    ):
+        store_nodes = tensor_store["nodes"]
+        if n_id.numel() == 0 or store_nodes.numel() == 0:
+            return self._empty_msg_result(msg_module)
+
+        select_mask = torch.isin(store_nodes, n_id)
+        if not torch.any(select_mask):
+            return self._empty_msg_result(msg_module)
+
+        selected_nodes = store_nodes[select_mask]
+        # Preserve dict-path ordering: iterate nodes in `n_id` order, then
+        # keep per-node insertion order.
+        node_pos = self._assoc[selected_nodes]
+        order = torch.argsort(node_pos, stable=True)
+
+        src = tensor_store["src"][select_mask][order]
+        dst = tensor_store["dst"][select_mask][order]
+        t = tensor_store["t"][select_mask][order]
+        raw_msg = tensor_store["raw_msg"][select_mask][order]
+
+        t_rel = t - self.last_update[src]
+        t_enc = self.time_enc(t_rel.to(raw_msg.dtype))
+        msg = msg_module(self.memory[src], self.memory[dst], raw_msg, t_enc)
+        return msg, t, src, dst
+
+    def _compute_msg(
+        self, n_id: Tensor, msg_store: TGNMessageStoreType, msg_module: Callable
+    ):
+        if self.tensor_store_mode == "off":
+            return self._compute_msg_from_dict(n_id, msg_store, msg_module)
+
+        tensor_store = self.msg_s_tensor_store if msg_store is self.msg_s_store else self.msg_d_tensor_store
+        fast = self._compute_msg_from_tensor(n_id, tensor_store, msg_module)
+        if self.tensor_store_mode == "verify":
+            ref = self._compute_msg_from_dict(n_id, msg_store, msg_module)
+            names = ("msg", "t", "src", "dst")
+            for name, a, b in zip(names, fast, ref):
+                if a.shape != b.shape or a.dtype != b.dtype or a.device != b.device:
+                    raise RuntimeError(f"Tensor store parity failed for {name}: shape/dtype/device mismatch")
+                if a.numel() > 0:
+                    if a.dtype.is_floating_point:
+                        ok = torch.allclose(a, b, atol=1e-6, rtol=1e-5)
+                    else:
+                        ok = torch.equal(a, b)
+                    if not ok:
+                        raise RuntimeError(f"Tensor store parity failed for {name}: values differ")
+        return fast
 
     def train(self, mode: bool = True):
         """Sets the module in training mode."""

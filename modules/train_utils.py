@@ -5,6 +5,29 @@ from tqdm import tqdm
 import mem_update_graph
 
 
+def _cached_or_host_lookup(cache_tensor, host_tensor, idx, device):
+    idx_long = idx.long()
+    if cache_tensor is not None:
+        if idx_long.device != cache_tensor.device:
+            idx_long = idx_long.to(cache_tensor.device)
+        return cache_tensor[idx_long]
+    return host_tensor[idx_long.cpu()].to(device)
+
+
+def _cached_src_dirs(cache_src, host_src, eid_idx, n_id, store_quad, device):
+    store_eid = eid_idx.long()
+    if cache_src is not None:
+        if store_eid.device != cache_src.device:
+            store_eid = store_eid.to(cache_src.device)
+        lhs = cache_src[store_eid]
+        rhs = n_id[store_quad[0]]
+        if rhs.device != lhs.device:
+            rhs = rhs.to(lhs.device)
+        return lhs == rhs
+    store_eid_cpu = store_eid.cpu()
+    return host_src[store_eid_cpu] == n_id[store_quad[0]].cpu()
+
+
 def train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler, known_dsts = None):
     bs = pos_dst.shape[0]
     if known_dsts is not None and neg_sampler is None:
@@ -456,6 +479,11 @@ def train(targs, max_seen_id):
     criterion = targs['criterion']
 
     dataset = targs['dataset']
+    data = dataset['data']
+    data_cache = targs.get('data_cache') or {}
+    cached_t = data_cache.get('t')
+    cached_msg = data_cache.get('msg')
+    cached_src = data_cache.get('src')
     train_loader = dataset['train_dataloader']
     device = targs['device']
     min_dst_idx = targs['min_dst_idx']
@@ -522,8 +550,8 @@ def train(targs, max_seen_id):
             b_eid_cpu = b_eid.cpu().long()
             # print(b_eid_cpu)
             # breakpoint()
-            b_t = dataset['data'].t[b_eid_cpu].to(device)
-            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+            b_t = _cached_or_host_lookup(cached_t, data.t, b_eid_cpu, device)
+            b_raw_msg = _cached_or_host_lookup(cached_msg, data.msg, b_eid_cpu, device)
             # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
 
 
@@ -535,8 +563,8 @@ def train(targs, max_seen_id):
 
             # Use unique EIDs to extract just the raw messages and timestamps once
             unique_eids = unique_keys[:, 2]  # this is just eid column
-            b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
-            b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+            b_t_unique = _cached_or_host_lookup(cached_t, data.t, unique_eids, device)
+            b_raw_msg_unique = _cached_or_host_lookup(cached_msg, data.msg, unique_eids, device)
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
                 
 
@@ -552,8 +580,8 @@ def train(targs, max_seen_id):
                 z,
                 last_update,
                 edge_index,
-                dataset['data'].t[e_id].to(device),
-                dataset['data'].msg[e_id].to(device),
+                _cached_or_host_lookup(cached_t, data.t, e_id, device),
+                _cached_or_host_lookup(cached_msg, data.msg, e_id, device),
             )
             # breakpoint()
             # print("Embedding generated")
@@ -571,9 +599,9 @@ def train(targs, max_seen_id):
             # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
             
-            store_eid = store_quad[3].cpu()
+            store_eid = store_quad[3]
             # breakpoint()
-            dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
+            dirs = _cached_src_dirs(cached_src, data.src, store_eid, n_id, store_quad, device)
             
             model['memory'].update_state(n_id, z, last_update, store_quad, dirs.to(device))
             # print("State Updated")
@@ -605,9 +633,19 @@ def train(targs, max_seen_id):
             # breakpoint()
             b_eid = mem_graph_quad[3]#e_id[bmsk]
             b_eid_cpu = b_eid.cpu()
-            b_t = dataset['data'].t[b_eid_cpu].to(device)
-            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-            b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+            b_t = _cached_or_host_lookup(cached_t, data.t, b_eid_cpu, device)
+            b_raw_msg = _cached_or_host_lookup(cached_msg, data.msg, b_eid_cpu, device)
+            if cached_src is not None:
+                b_eid_idx = b_eid.long()
+                if b_eid_idx.device != cached_src.device:
+                    b_eid_idx = b_eid_idx.to(cached_src.device)
+                lhs_src = cached_src[b_eid_idx]
+                rhs_src = n_id[mem_graph_quad[1]]
+                if rhs_src.device != lhs_src.device:
+                    rhs_src = rhs_src.to(lhs_src.device)
+                b_isrc = rhs_src == lhs_src
+            else:
+                b_isrc = n_id[mem_graph_quad[1]].cpu() == data.src[b_eid_cpu]
 
             z, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
             z = torch.cat([z[remap], z[3*bs:]])
@@ -634,8 +672,8 @@ def train(targs, max_seen_id):
                     z,
                     last_update,
                     edge_index,
-                    dataset['data'].t[e_id].to(device),
-                    dataset['data'].msg[e_id].to(device),
+                    _cached_or_host_lookup(cached_t, data.t, e_id, device),
+                    _cached_or_host_lookup(cached_msg, data.msg, e_id, device),
                 )
             # breakpoint()
             if decoder == "NCN":
@@ -698,6 +736,11 @@ def test_new(targs, max_seen_id, split_mode):
     model = targs['model']
     neighbor_loader = targs['sampler']
     dataset = targs['dataset']
+    data = dataset['data']
+    data_cache = targs.get('data_cache') or {}
+    cached_t = data_cache.get('t')
+    cached_msg = data_cache.get('msg')
+    cached_src = data_cache.get('src')
     deliver_to = targs['deliver_to']
     if split_mode == 'val':
         loader = dataset['val_dataloader']
@@ -789,8 +832,8 @@ def test_new(targs, max_seen_id, split_mode):
 
                 # Use unique EIDs to extract just the raw messages and timestamps once
                 unique_eids = unique_keys[:, 2]  # this is just eid column
-                b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
-                b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+                b_t_unique = _cached_or_host_lookup(cached_t, data.t, unique_eids, device)
+                b_raw_msg_unique = _cached_or_host_lookup(cached_msg, data.msg, unique_eids, device)
                 z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
                 # _apply_intra_batch_info(mem_graph_quad, n_id, b_t_unique, b_raw_msg_unique, old_mem, unique_keys, inverse_indices)
 
@@ -806,9 +849,19 @@ def test_new(targs, max_seen_id, split_mode):
                 mem_graph_quad = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, pos_src, pos_dst, device)
                 b_eid = mem_graph_quad[3]#e_id[bmsk]
                 b_eid_cpu = b_eid.cpu()
-                b_t = dataset['data'].t[b_eid_cpu].to(device)
-                b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
-                b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+                b_t = _cached_or_host_lookup(cached_t, data.t, b_eid_cpu, device)
+                b_raw_msg = _cached_or_host_lookup(cached_msg, data.msg, b_eid_cpu, device)
+                if cached_src is not None:
+                    b_eid_idx = b_eid.long()
+                    if b_eid_idx.device != cached_src.device:
+                        b_eid_idx = b_eid_idx.to(cached_src.device)
+                    lhs_src = cached_src[b_eid_idx]
+                    rhs_src = n_id[mem_graph_quad[1]]
+                    if rhs_src.device != lhs_src.device:
+                        rhs_src = rhs_src.to(lhs_src.device)
+                    b_isrc = rhs_src == lhs_src
+                else:
+                    b_isrc = n_id[mem_graph_quad[1]].cpu() == data.src[b_eid_cpu]
 
                 z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
 
@@ -845,8 +898,8 @@ def test_new(targs, max_seen_id, split_mode):
                     z_m,
                     last_update,
                     edge_index,
-                    dataset['data'].t[e_id].to(device),
-                    dataset['data'].msg[e_id].to(device),
+                    _cached_or_host_lookup(cached_t, data.t, e_id, device),
+                    _cached_or_host_lookup(cached_msg, data.msg, e_id, device),
                 )
 
             if decoder == "NCN":
@@ -926,13 +979,13 @@ def test_new(targs, max_seen_id, split_mode):
 
                 # Use unique EIDs to extract just the raw messages and timestamps once
             unique_eids = unique_keys[:, 2]  # this is just eid column
-            b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
-            b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+            b_t_unique = _cached_or_host_lookup(cached_t, data.t, unique_eids, device)
+            b_raw_msg_unique = _cached_or_host_lookup(cached_msg, data.msg, unique_eids, device)
             z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
                 
 
-            store_eid = store_quad[3].cpu()
-            dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
+            store_eid = store_quad[3]
+            dirs = _cached_src_dirs(cached_src, data.src, store_eid, n_id, store_quad, device)
             model['memory'].update_state(n_id, z_m, last_update, store_quad, dirs.to(device))
             # update_state(n_id, z, last_update, store_quad, dataset['data'].t[store_eid].to(device), dataset['data'].msg[store_eid])
         else:
