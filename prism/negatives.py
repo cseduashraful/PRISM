@@ -1,4 +1,5 @@
 import argparse
+import os
 import time
 
 from modules.neg_gen import NegativeEdgeGenerator
@@ -12,7 +13,11 @@ def generate_offline_negative_samples(
     strategy: str = "rnd",
     seed: int = 42,
     partial_path: str = "./",
+    if_exists: str = "skip",
 ):
+    if if_exists not in {"skip", "force", "error"}:
+        raise ValueError("if_exists must be one of: 'skip', 'force', 'error'")
+
     dataset = PyGLinkPropPredDataset(name=dataset_name, root=root)
     data = dataset.get_TemporalData()
     train_data = data[dataset.train_mask]
@@ -32,7 +37,27 @@ def generate_offline_negative_samples(
         historical_data=historical_data,
     )
 
+    out_files = {
+        "val": f"{partial_path}/{dataset_name}_val_ns.pkl",
+        "test": f"{partial_path}/{dataset_name}_test_ns.pkl",
+    }
+
+    if if_exists == "error":
+        conflicts = [p for p in out_files.values() if os.path.exists(p)]
+        if conflicts:
+            raise FileExistsError(
+                "Negative sample files already exist: " + ", ".join(conflicts)
+            )
+    elif if_exists == "force":
+        for p in out_files.values():
+            if os.path.exists(p):
+                os.remove(p)
+                print(f"INFO: Removed existing negatives file: {p}")
+
     for split_mode, split_data in [("val", val_data), ("test", test_data)]:
+        if if_exists == "skip" and os.path.exists(out_files[split_mode]):
+            print(f"INFO: Skipping {split_mode}; existing file found: {out_files[split_mode]}")
+            continue
         start = time.time()
         neg_sampler.generate_negative_samples(
             data=split_data, split_mode=split_mode, partial_path=partial_path
@@ -51,6 +76,7 @@ def main():
     parser.add_argument("--strategy", choices=["rnd", "hist_rnd"], default="rnd")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--partial-path", default="./")
+    parser.add_argument("--if-exists", choices=["skip", "force", "error"], default="skip")
     args = parser.parse_args()
     generate_offline_negative_samples(
         dataset_name=args.data,
@@ -59,6 +85,7 @@ def main():
         strategy=args.strategy,
         seed=args.seed,
         partial_path=args.partial_path,
+        if_exists=args.if_exists,
     )
 
 

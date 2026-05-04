@@ -169,7 +169,7 @@ When offline negatives are not provided, PRISM automatically falls back to rando
 PRISM exposes an interface to precompute validation/test negatives:
 
 ```bash
-prism-negatives --data tgbl-wiki --num-neg 100 --strategy rnd
+prism-negatives --data tgbl-wiki --num-neg 100 --strategy rnd --if-exists skip
 ```
 
 Or from Python:
@@ -181,8 +181,14 @@ generate_offline_negative_samples(
     dataset_name="tgbl-wiki",
     num_neg_per_pos=100,   # k random negatives per positive by default
     strategy="rnd",        # or "hist_rnd"
+    if_exists="skip",      # "skip" (default), "force", or "error"
 )
 ```
+
+`if_exists` behavior:
+- `skip`: do nothing for splits that already have generated files.
+- `force`: overwrite by deleting existing generated files and regenerating.
+- `error`: raise an error if generated files already exist.
 
 ## 🧾 Argument Descriptions
 
