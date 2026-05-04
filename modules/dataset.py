@@ -15,7 +15,6 @@ from tgb.linkproppred.negative_sampler import NegativeEdgeSampler
 from tgb.linkproppred.tkg_negative_sampler import TKGNegativeEdgeSampler
 from tgb.linkproppred.thg_negative_sampler import THGNegativeEdgeSampler
 from tgb.utils.info import (
-    PROJ_DIR, 
     DATA_URL_DICT, 
     DATA_VERSION_DICT, 
     DATA_EVAL_METRIC_DICT, 
@@ -38,8 +37,9 @@ from tgb.utils.pre_process import (
 from tgb.utils.utils import save_pkl, load_pkl
 from tgb.utils.utils import add_inverse_quadruples
 
-
-PROJ_DIR = "/work/pi_mserafini_umass_edu/ashraful/"
+# NOTE: Dataset roots are resolved from user input:
+# - absolute roots are used as-is
+# - relative roots are resolved from current working directory
 
 def load_toydata(fname):
     df = pd.read_csv(fname, skiprows=1, header=None)
@@ -211,7 +211,9 @@ class LinkPropPredDataset(object):
             )
 
 
-        root = PROJ_DIR + root
+        # Respect user-specified dataset roots:
+        # absolute paths stay absolute; relative paths are resolved from CWD.
+        root = root if osp.isabs(root) else osp.abspath(root)
 
         if meta_dict is None:
             self.dir_name = "_".join(name.split("-"))  ## replace hyphen with underline

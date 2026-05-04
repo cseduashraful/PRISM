@@ -139,7 +139,7 @@ test_result = exp.test()        # run test once, separately
 `PrismConfig` defaults and meanings:
 
 - `data="tgbl-wiki"`: built-in dataset name (used when `dataset_csv` and `dataset_dir` are not set).
-- `dataset_root="datasets"`: root directory for built-in datasets (`data=...` mode).
+- `dataset_root="datasets"`: root directory for built-in datasets (`data=...` mode). Absolute paths are used directly; relative paths are resolved from your current working directory.
 - `batch_size=1024`: minibatch size for train/val/test loaders.
 - `lr=1e-3`: optimizer learning rate.
 - `k_value=10`: number of temporal neighbors sampled per node.
