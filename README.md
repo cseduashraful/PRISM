@@ -103,7 +103,7 @@ You can use PRISM either with the provided conda environment, or as a lightweigh
 conda env create -f environment.yml
 conda activate prism-pyg
 python setup.py build_ext --inplace
-pip install -e .
+pip install -e . --no-build-isolation
 ```
 
 ### Option B: Existing Environment (Lightweight Extension)
@@ -112,7 +112,7 @@ If you already have compatible `torch`, `torch-geometric`, and `py-tgb` installe
 
 ```bash
 python setup.py build_ext --inplace
-pip install -e .
+pip install -e . --no-build-isolation
 ```
 
 Then in Python:

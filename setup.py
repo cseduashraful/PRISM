@@ -14,11 +14,19 @@ setup(
     python_requires=">=3.10",
     install_requires=[
         "numpy",
+        "scipy",
+        "pandas",
+        "scikit-learn",
+        "matplotlib",
+        "pyyaml",
+        "requests",
+        "beautifulsoup4",
+        "gdown",
+        "clint",
         "torch",
         "torch-geometric",
         "py-tgb",
         "tqdm",
-        "pandas",
     ],
     ext_modules=[
         CppExtension(
