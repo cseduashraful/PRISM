@@ -8,8 +8,8 @@ import itertools
 
 from torch_geometric.loader import TemporalDataLoader
 
-def read_data(DATA, BATCH_SIZE, load_neg_sampler = True):
-    dataset = PyGLinkPropPredDataset(name=DATA, root="datasets")
+def read_data(DATA, BATCH_SIZE, load_neg_sampler = True, root: str = "datasets"):
+    dataset = PyGLinkPropPredDataset(name=DATA, root=root)
     train_mask = dataset.train_mask
     val_mask = dataset.val_mask
     test_mask = dataset.test_mask

@@ -26,6 +26,7 @@ from .datasets import dataset_from_csv, dataset_from_directory
 @dataclass
 class PrismConfig:
     data: str = "tgbl-wiki"
+    dataset_root: str = "datasets"
     batch_size: int = 1024
     lr: float = 1e-3
     k_value: int = 10
@@ -82,7 +83,12 @@ class PrismExperiment:
                 test_ratio=cfg.test_ratio,
             )
         else:
-            self.dataset = read_data(cfg.data, cfg.batch_size, load_neg_sampler=cfg.load_ns)
+            self.dataset = read_data(
+                cfg.data,
+                cfg.batch_size,
+                load_neg_sampler=cfg.load_ns,
+                root=cfg.dataset_root,
+            )
         self.data = self.dataset["data"]
         self.unique_destination_nodes = torch.unique(self.data.dst)
         self.min_dst_idx, self.max_dst_idx = int(self.data.dst.min()), int(self.data.dst.max())

@@ -130,9 +130,8 @@ cfg = PrismConfig(
     load_ns=True,   # use offline negatives if available
 )
 exp = PrismExperiment(cfg).setup()
-history = exp.train()
-val = exp.validate()
-tst = exp.test()
+train_val_result = exp.train()  # train + val only
+test_result = exp.test()        # run test once, separately
 ```
 
 ### PrismConfig Parameters
@@ -140,6 +139,7 @@ tst = exp.test()
 `PrismConfig` defaults and meanings:
 
 - `data="tgbl-wiki"`: built-in dataset name (used when `dataset_csv` and `dataset_dir` are not set).
+- `dataset_root="datasets"`: root directory for built-in datasets (`data=...` mode).
 - `batch_size=1024`: minibatch size for train/val/test loaders.
 - `lr=1e-3`: optimizer learning rate.
 - `k_value=10`: number of temporal neighbors sampled per node.
@@ -163,6 +163,15 @@ tst = exp.test()
 - `dataset_dir=None`: path to directory-form dataset (e.g., `edges.csv`, optional `edge_features.pt`).
 - `val_ratio=0.15`: validation split ratio for custom CSV/directory datasets.
 - `test_ratio=0.15`: test split ratio for custom CSV/directory datasets.
+- `num_runs=1`: number of independent runs (`seed + run_idx`) for aggregated reporting.
+- `run_test=False`: if `True`, `exp.evaluate()` (or `exp.train()`) also runs test after selecting best val checkpoint.
+
+### Train / Validate / Test Workflow
+
+- `exp.train()` runs epoch-wise **train+val** and returns training history (or per-run summary when `num_runs>1`).
+- `exp.test()` is a separate phase and can be called once after training state is ready.
+- `exp.evaluate()` is a convenience wrapper around `train()`; with `run_test=True`, it performs train+val and then test.
+- During `train()`, logs include per-epoch `loss`, validation metric, `Train Time (s)`, epoch elapsed, and cumulative `Train+Val Elapsed (s)`.
 
 ## 🗂️ Supported Datasets
 
@@ -219,6 +228,24 @@ generate_offline_negative_samples(
 - `force`: overwrite by deleting existing generated files and regenerating.
 - `error`: raise an error if generated files already exist.
 
+### Multi-run Benchmark Example (TGB-style Report)
+
+```python
+from prism import PrismConfig, PrismExperiment
+
+cfg = PrismConfig(
+    data="tgbl-wiki",
+    num_epoch=100,
+    num_runs=3,
+    run_test=True,
+    val_neg=-1,   # use full provided negatives when available
+    load_ns=True,
+)
+exp = PrismExperiment(cfg).setup()
+result = exp.evaluate()  # train+val per run, then test per run
+print(result["summary"])  # includes best_val_mean/std and test_mean/std
+```
+
 ## 🧾 Argument Descriptions
 
 | Argument       | Description                                                                              |
@@ -234,3 +261,11 @@ generate_offline_negative_samples(
 | `--decoder`    | Decoder type: `fc` (TGN, APAN, Jodie) or `NCN` (TNCN) *(Default: fc)*                    |
 | `--embedding`  | Embedding type: `gat` (TGN, APAN, TNCN) or `time_emb` (Jodie) *(Default: gat)*           |
 | `--val_neg`    | Number of negatives during validation. `-1` means use all available. *(Default: -1)*     |
+| `--no-ns`      | Disable loading offline negative samples for built-in datasets. By default negatives are loaded when available. |
+| `--chunk_size` | Temporal chunk size used in GRN-Stream preprocessing *(Default: 256)*                     |
+| `--skip_cnt`   | Skip/coalescing control for neighbor-delivery sampling path *(Default: 16)*               |
+| `--m_pass`     | Number of intra-batch memory refinement passes *(Default: 3)*                             |
+| `--offload-mode` | Sampler backend mode: `off` (in-memory), `on` (disk offload), `auto` (fallback/switch) *(Default: auto)* |
+| `--auto-offload-gpu-mem-pct` | In `auto` mode, switch to disk offload when GPU memory usage reaches this percent; `<0` disables threshold switching *(Default: -1)* |
+| `--tensor-store-mode` | DAATGNMemory store mode: `on`, `off`, or `verify` *(Default: on)*                 |
+| `--cache-data-on-gpu` / `--no-cache-data-on-gpu` | Enable/disable startup caching of dataset tensors (`t/msg/src`) on GPU *(Default: enabled)* |
