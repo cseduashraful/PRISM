@@ -1,5 +1,4 @@
 from modules.data_utils import read_data #, get_TCSR, get_TCSR_py, verify_tcsr
-from modules.recent_sampler import Recent_K_Sampler
 from modules.train_utils import train as actrain, test_new as test, train_with_custom_neg_sampler
 from modules.memory_module import DAATGNMemory, DAAAPANMemory, DA_APANMemory
 
@@ -10,6 +9,7 @@ from modules.msg_agg import LastAggregator, MeanAggregator as Agg, AttentionAggr
 from modules.msg_func import IdentityMessage, MLPMessage
 from modules.decoder import LinkPredictor
 from modules.NCNDecoder.NCNPred import NCNPredictor
+from modules.grnstream import GRN_Stream
 
 # from torch.optim.lr_scheduler import StepLR
 
@@ -23,10 +23,6 @@ import sys
 import os.path as osp
 from pathlib import Path
 import argparse
-
-import preprocessor #openmp
-
-
 
 def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
@@ -46,6 +42,16 @@ def main():
     custom_parser.add_argument('--chunk_size', type=int, default=256)
     custom_parser.add_argument('--skip_cnt', type=int, default=16)
     custom_parser.add_argument('--m_pass', type=int, default=3)
+    custom_parser.add_argument(
+        '--offload-mode',
+        choices=['auto', 'off', 'on'],
+        default='auto',
+        help=(
+            "Sampler storage mode: 'off' keeps preprocessing in-memory, "
+            "'on' forces disk offloading, 'auto' tries in-memory and falls back to "
+            "disk offloading when memory is insufficient."
+        ),
+    )
     custom_parser.add_argument(
         '--tensor-store-mode',
         choices=['off', 'on', 'verify'],
@@ -84,6 +90,7 @@ def main():
     args.chunk_size = custom_args.chunk_size
     args.skip_cnt = custom_args.skip_cnt
     args.m_pass = custom_args.m_pass 
+    args.offload_mode = custom_args.offload_mode
     args.tensor_store_mode = custom_args.tensor_store_mode
     args.cache_data_on_gpu = custom_args.cache_data_on_gpu
 
@@ -95,6 +102,7 @@ def main():
     args.patience = args.num_epoch
 
     print("INFO: Arguments:", args)
+    print(f"INFO: Offload mode: {args.offload_mode}")
     print(f"INFO: PRISM tensor store mode: {args.tensor_store_mode}")
     print(f"INFO: Cache data on GPU: {args.cache_data_on_gpu}")
 
@@ -162,20 +170,20 @@ def main():
     # breakpoint()
     print("Converting data to tci data.")
     start_epoch_train = timeit.default_timer()
-    tci_data = preprocessor.preprocess(
-        data.src.tolist(),
-        data.dst.tolist(),#dst_list,
-        data.t.double().tolist(),#ts_list,
-        torch.arange(data.src.shape[0]).tolist(),#eid_list,
-        data.num_nodes,
-        chunk_size,
-        max_chunk_per_node
+    sampler, sampler_backend = GRN_Stream.build(
+        data=data,
+        k=K_VALUE,
+        chunk_size=chunk_size,
+        max_chunk_per_node=max_chunk_per_node,
+        offload_mode=args.offload_mode,
+        cache_size=args.bs,
+        device=device,
+        apan=APAN,
+        skip_cnt=args.skip_cnt,
     )
-    # breakpoint()
-    print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
 
-    # breakpoint()
-    sampler = Recent_K_Sampler(tci_data, max_chunk_per_node, K_VALUE, data.num_nodes, apan = APAN, skip_cnt = args.skip_cnt)
+    print(f"Done. Conversion  Time (s): {timeit.default_timer() - start_epoch_train: .4f}")
+    print(f"INFO: Sampler backend: {sampler_backend}")
        # for saving the results...
     results_path = f'{osp.dirname(osp.abspath(__file__))}/saved_results'
     if not osp.exists(results_path):

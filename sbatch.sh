@@ -4,17 +4,23 @@
 #SBATCH --mem=64G
 #SBATCH -G 1  # Number of GPUs
 
-#SBATCH --constraint=2080ti
-#SBATCH -t 5-00:00:00  # Job time limit
+#SBATCH --constraint=a16|a40|a100|l4|l40s
+#SBATCH -t 2-00:00:00  # Job time limit
 
 #SBATCH -o slurm-%j.out  # %j = job ID
 #SBATCH -q long
 
 
 module load conda/latest
-conda activate pyg
+conda activate prism-pyg
 
-# python main.py --data tgbl-wiki --deliver_to self --bs 4096 --lr 0.001 --num_epoch 30 --patience 10 --num_run 1 --tensor-store-mode on --cache-data-on-gpu
+# python main.py --data tgbl-wiki --deliver_to self --decoder fc \
+#     --bs 8192 --lr 0.001 --num_epoch 100 --patience 10 --num_run 1 \
+#     --tensor-store-mode on --cache-data-on-gpu --offload-mode auto
+
+python main.py --data tgbl-wiki --deliver_to self --decoder NCN \
+    --bs 8192 --lr 0.001 --num_epoch 100 --patience 10 --num_run 1 \
+    --tensor-store-mode on --cache-data-on-gpu --offload-mode auto
 
 
 # python apan.py --bs 64

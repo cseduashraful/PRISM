@@ -64,6 +64,12 @@ python main.py
 python main.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
 ```
 
+`main.py` now supports automatic sampler disk offloading with `--offload-mode auto` (default).  
+Modes:
+- `auto`: try in-memory sampler first, fall back to disk offloading on OOM.
+- `off`: force in-memory sampler.
+- `on`: force disk-offloading sampler.
+
 To run with disk offloading
 
 ```bash
