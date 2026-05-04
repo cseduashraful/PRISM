@@ -41,6 +41,8 @@ class PrismConfig:
     embedding: str = "gat"
     val_neg: int = 5
     offload_mode: str = "auto"
+    tensor_store_mode: str = "on"
+    cache_data_on_gpu: bool = True
     chunk_size: int = 256
     skip_cnt: int = 16
     m_pass: int = 3
@@ -68,6 +70,7 @@ class PrismExperiment:
 
     def _prepare_data(self):
         cfg = self.cfg
+        os.environ["PRISM_TENSOR_STORE_MODE"] = cfg.tensor_store_mode
         if cfg.dataset_dir:
             self.dataset = dataset_from_directory(
                 cfg.dataset_dir,
@@ -90,6 +93,23 @@ class PrismExperiment:
                 root=cfg.dataset_root,
             )
         self.data = self.dataset["data"]
+        self.data_cache = {"t": None, "msg": None, "src": None}
+        if cfg.cache_data_on_gpu and self.device.type == "cuda":
+            try:
+                self.data_cache["t"] = self.data.t.to(self.device)
+                self.data_cache["msg"] = self.data.msg.to(self.device)
+                self.data_cache["src"] = self.data.src.to(self.device)
+                print("INFO: Cached dataset tensors on GPU (t/msg/src).")
+            except RuntimeError as exc:
+                if "out of memory" not in str(exc).lower():
+                    raise
+                print(
+                    "WARNING: Could not cache dataset tensors on GPU (OOM). "
+                    "Falling back to per-iteration CPU->GPU copies."
+                )
+                torch.cuda.empty_cache()
+        elif cfg.cache_data_on_gpu and self.device.type != "cuda":
+            print("INFO: cache_data_on_gpu requested but CUDA is unavailable; using CPU tensors.")
         self.unique_destination_nodes = torch.unique(self.data.dst)
         self.min_dst_idx, self.max_dst_idx = int(self.data.dst.min()), int(self.data.dst.max())
 
@@ -188,7 +208,7 @@ class PrismExperiment:
             "embedding": cfg.embedding,
             "val_neg": cfg.val_neg,
             "known_dsts": None,
-            "data_cache": {"t": None, "msg": None, "src": None},
+            "data_cache": self.data_cache,
         }
 
     def setup(self):
