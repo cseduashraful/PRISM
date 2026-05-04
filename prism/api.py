@@ -50,6 +50,7 @@ class PrismConfig:
     val_ratio: float = 0.15
     test_ratio: float = 0.15
     num_runs: int = 1
+    run_test: bool = False
 
 
 class PrismExperiment:
@@ -62,6 +63,7 @@ class PrismExperiment:
         self.phase = "init"
         self.phase_max_seen_eid = {"train": -1, "val": -1, "test": -1}
         self.memory_progress_eid = -1
+        self._test_consumed = False
 
     def _prepare_data(self):
         cfg = self.cfg
@@ -188,16 +190,19 @@ class PrismExperiment:
             self._prepare_data()
         self._build_run(self.cfg.seed, 0)
         self._built = True
+        self._test_consumed = False
         return self
 
     def train(self, epochs: int | None = None):
         if not self._data_ready:
             self._prepare_data()
+        self._test_consumed = False
         epochs = self.cfg.num_epoch if epochs is None else epochs
         all_runs = []
         for run_idx in range(self.cfg.num_runs):
             run_seed = self.cfg.seed + run_idx
             self._build_run(run_seed, run_idx)
+            self._test_consumed = False
             history = {"loss": [], "val": [], "time": []}
             self.phase = "train"
             self.phase_max_seen_eid = {"train": -1, "val": -1, "test": -1}
@@ -217,18 +222,33 @@ class PrismExperiment:
                     break
             self.early_stopper.load_checkpoint(self.model)
             best_val = max(history["val"]) if history["val"] else float("nan")
+            run_result = {
+                "run_idx": run_idx,
+                "seed": run_seed,
+                "history": history,
+                "best_val": best_val,
+                "phase_max_seen_eid": dict(self.phase_max_seen_eid),
+            }
+            if self.cfg.run_test:
+                self.phase = "test"
+                test_start_eid = self.phase_max_seen_eid["val"]
+                if test_start_eid < 0:
+                    test_start_eid = self.phase_max_seen_eid["train"]
+                test_metric, test_end_eid = test(self.targs, test_start_eid, split_mode="test")
+                self.phase_max_seen_eid["test"] = test_end_eid
+                self.memory_progress_eid = test_end_eid
+                run_result["test"] = test_metric
+                run_result["phase_max_seen_eid"] = dict(self.phase_max_seen_eid)
+                # Test events have been consumed for this run state.
+                self._test_consumed = True
             all_runs.append(
-                {
-                    "run_idx": run_idx,
-                    "seed": run_seed,
-                    "history": history,
-                    "best_val": best_val,
-                    "phase_max_seen_eid": dict(self.phase_max_seen_eid),
-                }
+                run_result
             )
 
         if self.cfg.num_runs == 1:
             self.last_train_result = all_runs[0]["history"]
+            if self.cfg.run_test:
+                self.last_test_result = all_runs[0]["test"]
             return self.last_train_result
 
         best_vals = [r["best_val"] for r in all_runs]
@@ -241,7 +261,24 @@ class PrismExperiment:
                 "best_val_std": sample_val_std,
             },
         }
+        if self.cfg.run_test:
+            tests = [r["test"] for r in all_runs]
+            sample_test_std = statistics.stdev(tests) if len(tests) > 1 else 0.0
+            self.last_train_result["summary"]["test_mean"] = statistics.mean(tests)
+            self.last_train_result["summary"]["test_std"] = sample_test_std
+            self.last_test_result = self.last_train_result["summary"]["test_mean"]
         return self.last_train_result
+
+    def evaluate(self, epochs: int | None = None):
+        """
+        Train+validate, and optionally test if cfg.run_test=True.
+        Returns per-run stats and summaries from train().
+        """
+        return self.train(epochs=epochs)
+
+    # Backward-compatible typo alias requested by user prompt.
+    def evalute(self, epochs: int | None = None):
+        return self.evaluate(epochs=epochs)
 
     def validate(self):
         if not self._built:
@@ -256,6 +293,12 @@ class PrismExperiment:
     def test(self):
         if not self._built:
             self.setup()
+        if self._test_consumed:
+            raise RuntimeError(
+                "test() already executed for the current trained state. "
+                "This would re-consume test events and leak memory state. "
+                "Start a new experiment/run or retrain before testing again."
+            )
         self.early_stopper.load_checkpoint(self.model)
         self.phase = "test"
         # test starts after train and val memory progression
@@ -266,6 +309,7 @@ class PrismExperiment:
         self.phase_max_seen_eid["test"] = test_end_eid
         self.memory_progress_eid = test_end_eid
         self.last_test_result = tst
+        self._test_consumed = True
         return tst
 
     def get_state(self) -> dict[str, Any]:
