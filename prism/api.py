@@ -216,10 +216,6 @@ class PrismExperiment:
                 if self.early_stopper.step_check(val, self.model):
                     break
             self.early_stopper.load_checkpoint(self.model)
-            self.phase = "test"
-            test_metric, _ = test(self.targs, max_seen_eid, split_mode="test")
-            self.phase_max_seen_eid["test"] = max_seen_eid
-            self.memory_progress_eid = max_seen_eid
             best_val = max(history["val"]) if history["val"] else float("nan")
             all_runs.append(
                 {
@@ -227,7 +223,6 @@ class PrismExperiment:
                     "seed": run_seed,
                     "history": history,
                     "best_val": best_val,
-                    "test": test_metric,
                     "phase_max_seen_eid": dict(self.phase_max_seen_eid),
                 }
             )
@@ -237,17 +232,13 @@ class PrismExperiment:
             return self.last_train_result
 
         best_vals = [r["best_val"] for r in all_runs]
-        tests = [r["test"] for r in all_runs]
         sample_val_std = statistics.stdev(best_vals) if len(best_vals) > 1 else 0.0
-        sample_test_std = statistics.stdev(tests) if len(tests) > 1 else 0.0
         self.last_train_result = {
             "num_runs": self.cfg.num_runs,
             "runs": all_runs,
             "summary": {
                 "best_val_mean": statistics.mean(best_vals),
                 "best_val_std": sample_val_std,
-                "test_mean": statistics.mean(tests),
-                "test_std": sample_test_std,
             },
         }
         return self.last_train_result
@@ -274,6 +265,7 @@ class PrismExperiment:
         tst, test_end_eid = test(self.targs, test_start_eid, split_mode="test")
         self.phase_max_seen_eid["test"] = test_end_eid
         self.memory_progress_eid = test_end_eid
+        self.last_test_result = tst
         return tst
 
     def get_state(self) -> dict[str, Any]:
@@ -314,14 +306,14 @@ class PrismExperiment:
         if isinstance(result, dict) and "summary" in result:
             val_mean = result["summary"]["best_val_mean"]
             val_std = result["summary"]["best_val_std"]
-            test_mean = result["summary"]["test_mean"]
-            test_std = result["summary"]["test_std"]
+            test_mean = getattr(self, "last_test_result", float("nan"))
+            test_std = 0.0
         else:
             # Single-run fallback: std = 0
             val_hist = result.get("val", [])
             val_mean = max(val_hist) if val_hist else float("nan")
             val_std = 0.0
-            test_mean = float("nan")
+            test_mean = getattr(self, "last_test_result", float("nan"))
             test_std = 0.0
 
         return {
