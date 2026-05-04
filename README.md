@@ -70,6 +70,23 @@ Modes:
 - `off`: force in-memory sampler.
 - `on`: force disk-offloading sampler.
 
+You can also trigger runtime switching in `auto` mode based on GPU memory usage:
+- `--auto-offload-gpu-mem-pct X`: if GPU memory usage reaches `X%`, switch from in-memory sampler to disk-offload.
+- Default is `-1` (disabled).
+
+Examples:
+
+```bash
+# Disable offloading entirely (in-memory only)
+python main.py --data tgbl-wiki --offload-mode off
+
+# Force disk offloading from the start
+python main.py --data tgbl-wiki --offload-mode on
+
+# Auto: start in-memory, switch on OOM or when GPU memory reaches 85%
+python main.py --data tgbl-wiki --offload-mode auto --auto-offload-gpu-mem-pct 85
+```
+
 To run with disk offloading
 
 ```bash

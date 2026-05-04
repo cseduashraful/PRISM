@@ -54,6 +54,16 @@ def main():
         ),
     )
     custom_parser.add_argument(
+        '--auto-offload-gpu-mem-pct',
+        type=float,
+        default=-1.0,
+        help=(
+            "When offload-mode=auto, switch from in-memory sampler to disk-offload "
+            "once current GPU memory usage reaches this percent (0-100). "
+            "Set <0 to disable runtime threshold switching."
+        ),
+    )
+    custom_parser.add_argument(
         '--tensor-store-mode',
         choices=['off', 'on', 'verify'],
         default='on',
@@ -92,6 +102,7 @@ def main():
     args.skip_cnt = custom_args.skip_cnt
     args.m_pass = custom_args.m_pass 
     args.offload_mode = custom_args.offload_mode
+    args.auto_offload_gpu_mem_pct = custom_args.auto_offload_gpu_mem_pct
     args.tensor_store_mode = custom_args.tensor_store_mode
     args.cache_data_on_gpu = custom_args.cache_data_on_gpu
 
@@ -104,6 +115,7 @@ def main():
 
     print("INFO: Arguments:", args)
     print(f"INFO: Offload mode: {args.offload_mode}")
+    print(f"INFO: Auto offload GPU mem threshold (%): {args.auto_offload_gpu_mem_pct}")
     print(f"INFO: PRISM tensor store mode: {args.tensor_store_mode}")
     print(f"INFO: Cache data on GPU: {args.cache_data_on_gpu}")
 
@@ -327,6 +339,36 @@ def main():
                 e_tims += timeit.default_timer() - start_epoch_train
                 if e_tims > MAX_EXEC_TIME:
                     break
+
+            # Optional runtime switch: in auto mode, move to disk-offload when
+            # GPU memory pressure crosses a configured threshold.
+            if (
+                args.offload_mode == "auto"
+                and sampler_backend == "in-memory"
+                and args.auto_offload_gpu_mem_pct >= 0
+                and device.type == "cuda"
+            ):
+                dev_index = device.index if device.index is not None else torch.cuda.current_device()
+                free_bytes, total_bytes = torch.cuda.mem_get_info(device=dev_index)
+                used_pct = 100.0 * (1.0 - (float(free_bytes) / float(total_bytes)))
+                if used_pct >= args.auto_offload_gpu_mem_pct:
+                    print(
+                        f"INFO: GPU memory usage {used_pct:.2f}% >= "
+                        f"{args.auto_offload_gpu_mem_pct:.2f}% -> switching sampler to disk-offload."
+                    )
+                    sampler, sampler_backend = GRN_Stream.build(
+                        data=data,
+                        k=K_VALUE,
+                        chunk_size=chunk_size,
+                        max_chunk_per_node=max_chunk_per_node,
+                        offload_mode="on",
+                        cache_size=args.bs,
+                        device=device,
+                        apan=APAN,
+                        skip_cnt=args.skip_cnt,
+                    )
+                    targs['sampler'] = sampler
+                    print(f"INFO: Sampler backend: {sampler_backend}")
             
         train_val_time = timeit.default_timer() - start_train_val
         print(f"Train & Validation: Elapsed Time (s): {train_val_time: .4f}")
