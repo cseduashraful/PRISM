@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 import os
 import os.path as osp
-from pathlib import Path
 import timeit
+import statistics
+from typing import Any
 
 import torch
 
@@ -48,6 +49,7 @@ class PrismConfig:
     dataset_dir: str | None = None
     val_ratio: float = 0.15
     test_ratio: float = 0.15
+    num_runs: int = 1
 
 
 class PrismExperiment:
@@ -55,13 +57,14 @@ class PrismExperiment:
         self.cfg = cfg
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._built = False
+        self._data_ready = False
         self.max_seen_eid = -1
+        self.phase = "init"
+        self.phase_max_seen_eid = {"train": -1, "val": -1, "test": -1}
+        self.memory_progress_eid = -1
 
-    def setup(self):
+    def _prepare_data(self):
         cfg = self.cfg
-        torch.manual_seed(cfg.seed)
-        set_random_seed(cfg.seed)
-
         if cfg.dataset_dir:
             self.dataset = dataset_from_directory(
                 cfg.dataset_dir,
@@ -98,6 +101,12 @@ class PrismExperiment:
             apan=(cfg.deliver_to == "neighbor"),
             skip_cnt=cfg.skip_cnt,
         )
+        self._data_ready = True
+
+    def _build_run(self, run_seed: int, run_idx: int):
+        cfg = self.cfg
+        torch.manual_seed(run_seed)
+        set_random_seed(run_seed)
 
         if cfg.deliver_to == "self":
             memory = DAATGNMemory(
@@ -148,7 +157,7 @@ class PrismExperiment:
         self.criterion = torch.nn.BCEWithLogitsLoss()
 
         save_model_dir = f"{osp.dirname(osp.abspath(__file__))}/../saved_models/"
-        run_id = f"{cfg.data}_{cfg.deliver_to}_{cfg.decoder}_{cfg.seed}_{os.getpid()}"
+        run_id = f"{cfg.data}_{cfg.deliver_to}_{cfg.decoder}_{run_seed}_{run_idx}_{os.getpid()}"
         self.early_stopper = EarlyStopMonitor(
             save_model_dir=save_model_dir,
             save_model_id=run_id,
@@ -173,34 +182,161 @@ class PrismExperiment:
             "known_dsts": None,
             "data_cache": {"t": None, "msg": None, "src": None},
         }
+
+    def setup(self):
+        if not self._data_ready:
+            self._prepare_data()
+        self._build_run(self.cfg.seed, 0)
         self._built = True
         return self
 
     def train(self, epochs: int | None = None):
-        if not self._built:
-            self.setup()
+        if not self._data_ready:
+            self._prepare_data()
         epochs = self.cfg.num_epoch if epochs is None else epochs
-        history = {"loss": [], "val": [], "time": []}
-        for epoch in range(1, epochs + 1):
-            start = timeit.default_timer()
-            loss, self.max_seen_eid = actrain(self.targs, self.max_seen_eid)
-            val, _ = test(self.targs, self.max_seen_eid, split_mode="val")
-            history["loss"].append(loss)
-            history["val"].append(val)
-            history["time"].append(timeit.default_timer() - start)
-            if self.early_stopper.step_check(val, self.model):
-                break
-        return history
+        all_runs = []
+        for run_idx in range(self.cfg.num_runs):
+            run_seed = self.cfg.seed + run_idx
+            self._build_run(run_seed, run_idx)
+            history = {"loss": [], "val": [], "time": []}
+            self.phase = "train"
+            self.phase_max_seen_eid = {"train": -1, "val": -1, "test": -1}
+            self.memory_progress_eid = -1
+            for epoch in range(1, epochs + 1):
+                start = timeit.default_timer()
+                # Keep parity with main.py: trainer expects epoch-local eid offset.
+                loss, max_seen_eid = actrain(self.targs, -1)
+                val, _ = test(self.targs, max_seen_eid, split_mode="val")
+                self.phase_max_seen_eid["train"] = max_seen_eid
+                self.phase_max_seen_eid["val"] = max_seen_eid
+                self.memory_progress_eid = max_seen_eid
+                history["loss"].append(loss)
+                history["val"].append(val)
+                history["time"].append(timeit.default_timer() - start)
+                if self.early_stopper.step_check(val, self.model):
+                    break
+            self.early_stopper.load_checkpoint(self.model)
+            self.phase = "test"
+            test_metric, _ = test(self.targs, max_seen_eid, split_mode="test")
+            self.phase_max_seen_eid["test"] = max_seen_eid
+            self.memory_progress_eid = max_seen_eid
+            best_val = max(history["val"]) if history["val"] else float("nan")
+            all_runs.append(
+                {
+                    "run_idx": run_idx,
+                    "seed": run_seed,
+                    "history": history,
+                    "best_val": best_val,
+                    "test": test_metric,
+                    "phase_max_seen_eid": dict(self.phase_max_seen_eid),
+                }
+            )
+
+        if self.cfg.num_runs == 1:
+            self.last_train_result = all_runs[0]["history"]
+            return self.last_train_result
+
+        best_vals = [r["best_val"] for r in all_runs]
+        tests = [r["test"] for r in all_runs]
+        sample_val_std = statistics.stdev(best_vals) if len(best_vals) > 1 else 0.0
+        sample_test_std = statistics.stdev(tests) if len(tests) > 1 else 0.0
+        self.last_train_result = {
+            "num_runs": self.cfg.num_runs,
+            "runs": all_runs,
+            "summary": {
+                "best_val_mean": statistics.mean(best_vals),
+                "best_val_std": sample_val_std,
+                "test_mean": statistics.mean(tests),
+                "test_std": sample_test_std,
+            },
+        }
+        return self.last_train_result
 
     def validate(self):
         if not self._built:
             self.setup()
-        val, self.max_seen_eid = test(self.targs, self.max_seen_eid, split_mode="val")
+        self.phase = "val"
+        val_start_eid = self.phase_max_seen_eid["train"]
+        val, val_end_eid = test(self.targs, val_start_eid, split_mode="val")
+        self.phase_max_seen_eid["val"] = val_end_eid
+        self.memory_progress_eid = val_end_eid
         return val
 
     def test(self):
         if not self._built:
             self.setup()
         self.early_stopper.load_checkpoint(self.model)
-        tst, self.max_seen_eid = test(self.targs, self.max_seen_eid, split_mode="test")
+        self.phase = "test"
+        # test starts after train and val memory progression
+        test_start_eid = self.phase_max_seen_eid["val"]
+        if test_start_eid < 0:
+            test_start_eid = self.phase_max_seen_eid["train"]
+        tst, test_end_eid = test(self.targs, test_start_eid, split_mode="test")
+        self.phase_max_seen_eid["test"] = test_end_eid
+        self.memory_progress_eid = test_end_eid
         return tst
+
+    def get_state(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "phase_max_seen_eid": dict(self.phase_max_seen_eid),
+            "memory_progress_eid": self.memory_progress_eid,
+        }
+
+    @staticmethod
+    def _format_mean_std(mean_val: float, std_val: float) -> str:
+        # Matches TGB form expectation: "mean, std"
+        return f"{mean_val:.10f}, {std_val:.10f}"
+
+    def leaderboard_submission_report(
+        self,
+        contact_email: str,
+        primary_contact_name: str,
+        tgb_version: str,
+        method_name: str,
+        external_data: str,
+        dataset_name: str,
+        code_access: str,
+        paper_link: str,
+        tuned_hyperparameters: str,
+        implementation: str,
+        num_parameters: str,
+        hardware: str,
+    ) -> dict[str, Any]:
+        """
+        Create a form-ready report dictionary for TGB leaderboard submission.
+        Call this after `train()`.
+        """
+        if not hasattr(self, "last_train_result"):
+            raise RuntimeError("Run train() before generating submission report.")
+
+        result = self.last_train_result
+        if isinstance(result, dict) and "summary" in result:
+            val_mean = result["summary"]["best_val_mean"]
+            val_std = result["summary"]["best_val_std"]
+            test_mean = result["summary"]["test_mean"]
+            test_std = result["summary"]["test_std"]
+        else:
+            # Single-run fallback: std = 0
+            val_hist = result.get("val", [])
+            val_mean = max(val_hist) if val_hist else float("nan")
+            val_std = 0.0
+            test_mean = float("nan")
+            test_std = 0.0
+
+        return {
+            "Contact Email": contact_email,
+            "Primary Contact Name": primary_contact_name,
+            "TGB Package Version": tgb_version,
+            "Name of Your Method": method_name,
+            "External data": external_data,
+            "Dataset": dataset_name,
+            "Test Performance": self._format_mean_std(test_mean, test_std),
+            "Validation Performance": self._format_mean_std(val_mean, val_std),
+            "Code Access": code_access,
+            "Paper Link": paper_link,
+            "Tuned Hyper-parameters": tuned_hyperparameters,
+            "Implementation": implementation,
+            "# of Parameters": num_parameters,
+            "Hardware": hardware,
+        }
