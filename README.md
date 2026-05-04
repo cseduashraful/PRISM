@@ -115,6 +115,19 @@ python setup.py build_ext --inplace
 pip install -e . --no-build-isolation
 ```
 
+### Option C: Non-Editable Install (wheel-style)
+
+Use this if you want PRISM installed into `site-packages` instead of linked to your source tree:
+
+```bash
+pip install . --no-build-isolation
+```
+
+Notes:
+- For non-editable install, you normally do **not** need `python setup.py build_ext --inplace` first.
+- `pip install .` builds the C++/CUDA extensions during installation and installs the compiled `.so` files into `site-packages` (expected behavior).
+- Use `build_ext --inplace` only when you specifically want `.so` files generated inside the repo for direct source-tree execution/debugging.
+
 Then in Python:
 
 ```python
