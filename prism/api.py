@@ -211,10 +211,10 @@ class PrismExperiment:
                 start = timeit.default_timer()
                 # Keep parity with main.py: trainer expects epoch-local eid offset.
                 loss, max_seen_eid = actrain(self.targs, -1)
-                val, _ = test(self.targs, max_seen_eid, split_mode="val")
+                val, val_end_eid = test(self.targs, max_seen_eid, split_mode="val")
                 self.phase_max_seen_eid["train"] = max_seen_eid
-                self.phase_max_seen_eid["val"] = max_seen_eid
-                self.memory_progress_eid = max_seen_eid
+                self.phase_max_seen_eid["val"] = val_end_eid
+                self.memory_progress_eid = val_end_eid
                 history["loss"].append(loss)
                 history["val"].append(val)
                 history["time"].append(timeit.default_timer() - start)
