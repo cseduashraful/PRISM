@@ -135,6 +135,35 @@ val = exp.validate()
 tst = exp.test()
 ```
 
+### PrismConfig Parameters
+
+`PrismConfig` defaults and meanings:
+
+- `data="tgbl-wiki"`: built-in dataset name (used when `dataset_csv` and `dataset_dir` are not set).
+- `batch_size=1024`: minibatch size for train/val/test loaders.
+- `lr=1e-3`: optimizer learning rate.
+- `k_value=10`: number of temporal neighbors sampled per node.
+- `num_epoch=50`: number of training epochs.
+- `seed=1`: random seed for reproducibility.
+- `mem_dim=100`: memory-state dimension.
+- `time_dim=100`: time-encoding dimension.
+- `emb_dim=100`: node embedding output dimension.
+- `tolerance=1e-6`: early-stop improvement tolerance.
+- `deliver_to="self"`: message delivery mode (`"self"` or `"neighbor"`).
+- `decoder="fc"`: link predictor decoder (`"fc"` or `"NCN"`).
+- `embedding="gat"`: embedding module (`"gat"` or `"time_emb"`).
+- `val_neg=5`: number of negatives per positive during validation/test (`-1` means use all available for offline negatives).
+- `offload_mode="auto"`: sampler offloading mode (`"off"`, `"on"`, `"auto"`).
+- `chunk_size=256`: temporal chunk size used by sampler preprocessing.
+- `skip_cnt=16`: skip/coalescing control used in neighbor-delivery path.
+- `m_pass=3`: number of intra-batch memory refinement passes.
+- `load_ns=True`: whether to load precomputed offline negatives for built-in datasets.
+- `auto_offload_gpu_mem_pct=-1.0`: runtime memory threshold for switching to disk offload in `auto` mode; `<0` disables threshold switching.
+- `dataset_csv=None`: path to custom CSV dataset (`src`, `dst`, `t`, optional `msg*`).
+- `dataset_dir=None`: path to directory-form dataset (e.g., `edges.csv`, optional `edge_features.pt`).
+- `val_ratio=0.15`: validation split ratio for custom CSV/directory datasets.
+- `test_ratio=0.15`: test split ratio for custom CSV/directory datasets.
+
 ## 🗂️ Supported Datasets
 
 - Built-in PRISM/TGB datasets (e.g., `tgbl-wiki`) via `PrismConfig(data="...")`.
