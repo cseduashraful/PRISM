@@ -30,16 +30,25 @@ Mitigates stale memory problems within large batches using dependency-aware appr
 
 ## ⚙️ Build Instructions
 
+Default assumption (Unity cluster): load CUDA before building extensions:
+
+```bash
+module load cuda/11.8
+```
+
 To compile the custom C++ and CUDA extensions (TCI Engine and GRN-Stream Sampler):
 
 ```bash
 python setup.py build_ext --inplace
 ```
 
-To compile the disk offloading routine (TCI Engine with disk-offloading):
+If you are not on Unity, make sure CUDA Toolkit headers are available, then build:
 
 ```bash
-python prep_setup.py build_ext --inplace
+export CUDA_HOME=/path/to/cuda
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+python setup.py build_ext --inplace
 ```
 
 ## 🚀 Running the Code

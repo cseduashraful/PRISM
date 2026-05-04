@@ -26,9 +26,12 @@ dependencies:
   - cxx-compiler
   - gcc_linux-64
   - gxx_linux-64
-  - pytorch=2.3.*
-  - pytorch-cuda=12.1
-  - pytorch-geometric=2.5.*
-  - cuda-nvcc=12.1
+  - pytorch=2.2.*
+  - pytorch-cuda=11.8
+  - pyg=2.5.*
+  - cuda-nvcc=11.8
   - pip:
+      - -f https://data.pyg.org/whl/torch-2.2.0+cu118.html
+      - torch-scatter
+      - torch-sparse
       - py-tgb==2.0.0
