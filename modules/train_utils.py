@@ -453,6 +453,14 @@ def append_unique_rows(od, new_rows):
     mask = ~torch.isin(new_keys, od_keys)
 
     return torch.cat([od, new_rows[mask]], dim=0)
+import timeit
+
+
+def sum_list(values):
+    total = 0
+    for v in values:
+        total += v
+    return total
 
 
 def train(targs, max_seen_id):
@@ -481,6 +489,20 @@ def train(targs, max_seen_id):
 
     total_loss = 0
     max_seen_eid = max_seen_id
+    mcg_t = 0
+    depth_cal = False
+    freq_tensor = torch.zeros(8000, dtype=torch.long)
+
+    s_times = []
+    mcg_times = []
+    mem_module_times = []
+    emb_module_times = []
+    decoder_times = []
+    mem_store_times = []
+    b_pass_times = []
+    data_movement_times = []
+    e_times = []
+
 
     for batch in train_loader:
         batch = batch.to(device)
@@ -489,6 +511,7 @@ def train(targs, max_seen_id):
         src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
         bs  = src.shape[0]
 
+        time_start = timeit.default_timer()
         neg_dst = train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler, known_dsts = known_dsts)
         # neg_dst = torch.randint(
         #     min_dst_idx,
@@ -506,6 +529,8 @@ def train(targs, max_seen_id):
             nid_ts[:root_nodes.shape[0]] = root_ts
             n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
         # breakpoint()
+        s_times.append(timeit.default_timer() - time_start)
+        time_start = timeit.default_timer()
         if deliver_to == "neighbor":
             # breakpoint()
             # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edgrooe_index, n_id)
@@ -519,7 +544,16 @@ def train(targs, max_seen_id):
             od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
             # breakpoint()
             # mem_graph_quad_v2, store_quad_v2 = getMem_graph_apan_v2(od_updated,bs, max_seen_eid, device)
+            mcg_ts = timeit.default_timer()
             mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated, bs, max_seen_eid)
+
+            mcg_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
+
+            ##Disable later
+            # depths = analyze_mcg_depth_apan(mem_graph_quad)
+
+            # mcg_t = mcg_t + (-mcg_ts + timeit.default_timer())
             # mem_graph_quad, store_quad = model['memory'].mem_graph(od_updated,bs, max_seen_eid)
             
             # if torch.equal(mem_graph_quad, mem_graph_quad_v2) and torch.equal(store_quad, store_quad_v2):
@@ -534,6 +568,8 @@ def train(targs, max_seen_id):
             # breakpoint()
             b_t = dataset['data'].t[b_eid_cpu].to(device)
             b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+            data_movement_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
             # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
 
 
@@ -547,8 +583,12 @@ def train(targs, max_seen_id):
             unique_eids = unique_keys[:, 2]  # this is just eid column
             b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
             b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+            # time_start = timeit.default_timer()
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
                 
+            mem_module_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
+
 
 
 
@@ -565,10 +605,17 @@ def train(targs, max_seen_id):
                 dataset['data'].t[e_id].to(device),
                 dataset['data'].msg[e_id].to(device),
             )
+
+            emb_module_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer() 
+
             # breakpoint()
             # print("Embedding generated")
             pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
             neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+
+            decoder_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
 
 
             # breakpoint()
@@ -577,6 +624,9 @@ def train(targs, max_seen_id):
             # print("batch loss computed")
             loss.backward()
             optimizer.step()
+
+            b_pass_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
 
             # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
             z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
@@ -588,18 +638,33 @@ def train(targs, max_seen_id):
             model['memory'].update_state(n_id, z, last_update, store_quad, dirs.to(device))
             # print("State Updated")
             model['memory'].detach()
+            mem_store_times.append(timeit.default_timer() - time_start) 
             total_loss += float(loss) * batch.num_events
             
 
 
         else:
+            # mcg_ts = timeit.default_timer()
+            
             mem_graph_quad_uf  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
             mem_graph_quad = mem_graph_quad_uf
+            
+            mem_graph = n_id[mem_graph_quad[:2]]
+
+
+            ###Disable later
+            # if depth_cal:
+            #     analyze_mcg_depth_tgn(mem_graph_quad, freq_tensor)
+                # depth_tensor =  torch.cat([depth_tensor, depths])
+
             # breakpoint()
 
             remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , src, pos_dst)
             remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
             remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
+            # mcg_t = mcg_t + (-mcg_ts + timeit.default_timer())
+            mcg_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
 
             # filtered =  False
             # if filtered:
@@ -623,11 +688,15 @@ def train(targs, max_seen_id):
             z = torch.cat([z[remap], z[3*bs:]])
             last_update = torch.cat([last_update[remap], last_update[3*bs:]])
             
+
             # breakpoint()
             ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , src, pos_dst)
 
             updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
             edge_index = torch.stack([updated_src, edge_index[1,:]])
+
+            mem_module_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
             # breakpoint()
             # if edge_index.max()>=z.size(0):
             #     breakpoint()
@@ -648,6 +717,9 @@ def train(targs, max_seen_id):
                     dataset['data'].msg[e_id].to(device),
                 )
             # breakpoint()
+            emb_module_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
+
             if decoder == "NCN":
                 # pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
                 # neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
@@ -663,13 +735,17 @@ def train(targs, max_seen_id):
                 pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
                 neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
 
-
+            decoder_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer() 
             # breakpoint()
             loss = criterion(pos_out, torch.ones_like(pos_out))
             loss += criterion(neg_out, torch.zeros_like(neg_out))
 
             loss.backward()
             optimizer.step()
+
+            b_pass_times.append(timeit.default_timer() - time_start)
+            time_start = timeit.default_timer()
             # model['memory'].update_state(src, pos_dst, t, msg)
             z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
             #model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
@@ -682,15 +758,89 @@ def train(targs, max_seen_id):
                 n_id, last_update, z_m)
             model['memory'].detach()
 
+            mem_store_times.append(timeit.default_timer() - time_start)
             total_loss += float(loss) * batch.num_events
         
         
         
         max_seen_eid += batch.num_events
         # break
+    # if depth_cal:
+    #     print(f"MCG construction time: {mcg_t}")
+    #     idx = torch.where(freq_tensor != 0)[0]
+    #     print_depth_stats(freq_tensor, idx)
+    #     breakpoint()
+    
+    print(f"'s_times' : {sum_list(s_times)},")
+    print(f"'memory_module_times' : {sum_list(mcg_times)+sum_list(mem_module_times)},")
+    print(f"'emb_module_times' : {sum_list(emb_module_times)},")
+    print(f"'decoder_times' : {sum_list(decoder_times)},")
+    print(f"'memory_store_times' : {sum_list(mem_store_times)-sum_list(mem_module_times)},")
+
+
+
+    # print(f"mcg_times = {mcg_times}")
+    # print(f"mem_module_times = {mem_module_times}")
+    # print(f"emb_module_times = {emb_module_times}")
+    # print(f"decoder_times = {decoder_times}")
+    # print(f"b_pass_times = {b_pass_times}")
+    # print(f"mem_store_times = {mem_store_times}")
+
+    # breakpoint()
+
     return total_loss/dataset['train_length'], max_seen_eid
 
 
+
+
+def print_depth_stats(freq_tensor, idx, ks=(1,2,3,4,5)):
+    """
+    freq_tensor : 1D tensor of counts indexed by depth
+    idx         : tensor of depth values that have nonzero frequency
+    ks          : tuple of pass thresholds to report cumulative percentages
+    """
+
+    depths = idx.long()
+    freqs = freq_tensor[depths].long()
+
+    N = freqs.sum().item()
+
+    # Mean
+    mean = (depths * freqs).sum().float() / N
+
+    # Cumulative distribution
+    cum = torch.cumsum(freqs, dim=0)
+
+    # Median
+    median_depth = depths[torch.searchsorted(cum, torch.tensor(N // 2))].item()
+
+    # 95th percentile
+    p95_depth = depths[torch.searchsorted(cum, torch.tensor(int(0.95 * N)))].item()
+
+    # 99th percentile
+    p99_depth = depths[torch.searchsorted(cum, torch.tensor(int(0.99 * N)))].item()
+
+    # Max depth
+    max_depth = depths[-1].item()
+
+    print("===== Dependency Depth Statistics =====")
+    print(f"Total samples      : {N}")
+    print(f"Mean depth         : {mean:.4f}")
+    print(f"Median depth       : {median_depth}")
+    print(f"95th percentile    : {p95_depth}")
+    print(f"99th percentile    : {p99_depth}")
+    print(f"Maximum depth      : {max_depth}")
+
+    # Cumulative percentages for small pass counts
+    for k in ks:
+        if k >= depths[-1]:
+            pct = 100.0
+        else:
+            mask = depths <= k
+            pct = freqs[mask].sum().item() / N * 100
+        print(f"% resolved ≤ {k} passes : {pct:.2f}%")
+
+    print("========================================")
 
 @torch.no_grad()
 def test_new(targs, max_seen_id, split_mode):
@@ -1427,3 +1577,361 @@ def train_sample_only(targs, max_seen_id):
         # breakpoint()
                 # break
     return None, None#total_loss/dataset['train_length'], max_seen_eid
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def train_prof(targs, max_seen_id):
+    model = targs['model']
+    model['memory'].train()
+    model['gnn'].train()
+    model['link_pred'].train()
+    model['memory'].reset_state()
+
+    optimizer = targs['optimizer']
+    criterion = targs['criterion']
+
+    dataset = targs['dataset']
+    train_loader = dataset['train_dataloader']
+    device = targs['device']
+    min_dst_idx = targs['min_dst_idx']
+    max_dst_idx = targs['max_dst_idx']
+    neighbor_loader = targs['sampler']
+
+    neg_sampler = targs['neg_sampler']
+    known_dsts = targs['known_dsts']
+    deliver_to = targs['deliver_to']
+    decoder = targs['decoder']
+    embedding = targs['embedding']
+
+
+    total_loss = 0
+    max_seen_eid = max_seen_id
+    mcg_t = 0
+    for batch in train_loader:
+        batch = batch.to(device)
+        optimizer.zero_grad()
+
+        src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
+        bs  = src.shape[0]
+
+        with torch.profiler.record_function("negative sampler"):
+            neg_dst = train_neg_sampler(min_dst_idx, max_dst_idx, pos_dst, device, neg_sampler, known_dsts = known_dsts)
+   
+        root_ts = torch.cat([t, t, t], dim = 0).double()
+        root_nodes = torch.cat([src, pos_dst, neg_dst], dim = 0)
+        with torch.profiler.record_function("neighborhood sampler"):
+            n_id, e_id, edge_index = neighbor_loader.sample(root_nodes, root_ts)
+        # breakpoint()
+        if decoder == 'NCN':
+            nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+            nid_ts[:root_nodes.shape[0]] = root_ts
+            n_id, e_id, edge_index = neighbor_loader.sample(n_id, nid_ts)
+        # breakpoint()
+        if deliver_to == "neighbor": #APAN
+            # breakpoint()
+            # neighbors = get_latest_neighbors_per_node(src, pos_dst, t, edgrooe_index, n_id)
+            bsrc = torch.stack([torch.arange(src.shape[0]).to(device), pos_dst])
+            bdst = torch.stack([torch.arange(src.shape[0], 2*src.shape[0]).to(device), src])
+            bndst = torch.stack([torch.arange(2*src.shape[0], 3*src.shape[0]).to(device), torch.full((src.shape[0],), -1).to(device)])
+            
+            od = torch.cat([ bsrc.T, bdst.T, bndst.T, neighbor_loader.id_to_pair], dim=0)
+            od_updated  = torch.cat([od, n_id.unsqueeze(1)], dim=1)
+            tmp = od_updated[:, 0] % bs
+            od_updated = torch.cat([od_updated, tmp.unsqueeze(1)], dim=1)
+            # breakpoint()
+            # mem_graph_quad_v2, store_quad_v2 = getMem_graph_apan_v2(od_updated,bs, max_seen_eid, device)
+            mem_graph_quad, store_quad = vectorized_getMem_graph(od_updated, bs, max_seen_eid)
+            b_eid = mem_graph_quad[3]#e_id[bmsk]
+            b_eid_cpu = b_eid.cpu().long()
+            # print(b_eid_cpu)
+            # breakpoint()
+            b_t = dataset['data'].t[b_eid_cpu].to(device)
+            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+            # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg, data = dataset['data'])
+            # Get unique (src, dst, eid) triples
+            triplet_keys = mem_graph_quad[[0, 1, 3]].T  # shape: [N, 3]
+            unique_keys, inverse_indices = torch.unique(triplet_keys, dim=0, return_inverse=True)
+
+            # Use unique EIDs to extract just the raw messages and timestamps once
+            unique_eids = unique_keys[:, 2]  # this is just eid column
+            b_t_unique = dataset['data'].t[unique_eids.cpu()].to(device)
+            b_raw_msg_unique = dataset['data'].msg[unique_eids.cpu()].to(device)
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+            z = model['gnn'](
+                z,
+                last_update,
+                edge_index,
+                dataset['data'].t[e_id].to(device),
+                dataset['data'].msg[e_id].to(device),
+            )
+            # breakpoint()
+            # print("Embedding generated")
+            pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+            neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+
+
+            # breakpoint()
+            loss = criterion(pos_out, torch.ones_like(pos_out))
+            loss += criterion(neg_out, torch.zeros_like(neg_out))
+            # print("batch loss computed")
+            loss.backward()
+            optimizer.step()
+
+            # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+            
+            store_eid = store_quad[3].cpu()
+            # breakpoint()
+            dirs = dataset['data'].src[store_eid] == n_id[store_quad[0]].cpu()#store_quad[0].cpu()
+            
+            model['memory'].update_state(n_id, z, last_update, store_quad, dirs.to(device))
+            # print("State Updated")
+            model['memory'].detach()
+            total_loss += float(loss) * batch.num_events
+
+        else:
+            with torch.profiler.record_function("MCG construction"):
+                mem_graph_quad_uf  = getMem_graph(model, neighbor_loader, edge_index, n_id, e_id, bs, max_seen_eid, src, pos_dst, device)
+                mem_graph_quad = mem_graph_quad_uf
+                remap_partial = model['memory'].mem_graph(n_id[:3*bs],torch.arange(3*bs).to(device) , src, pos_dst)
+                remap_fall_back = neighbor_loader.assoc[n_id[:3*bs]]
+                remap = torch.where(remap_partial != -1, remap_partial, remap_fall_back)
+
+
+            b_eid = mem_graph_quad[3]#e_id[bmsk]
+            b_eid_cpu = b_eid.cpu()
+            b_t = dataset['data'].t[b_eid_cpu].to(device)
+            b_raw_msg = dataset['data'].msg[b_eid_cpu].to(device)
+            b_isrc = n_id[mem_graph_quad[1]].cpu() == dataset['data'].src[b_eid_cpu]
+            with torch.profiler.record_function("Memory Module"):
+                z, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+            z = torch.cat([z[remap], z[3*bs:]])
+            last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+            
+            # breakpoint()
+            ei_src_all = model['memory'].mem_graph(n_id[edge_index[0,:]],edge_index[1,:] , src, pos_dst)
+
+            updated_src = torch.where(ei_src_all != -1, ei_src_all, edge_index[0, :])
+            edge_index = torch.stack([updated_src, edge_index[1,:]])
+            if embedding == "time_emb":
+                nid_ts = root_ts.new_full((n_id.shape[0],), root_ts.min())
+                nid_ts[:root_nodes.shape[0]] = root_ts
+                z = model['gnn'](
+                    z,
+                    last_update,
+                    nid_ts
+                )
+            else:
+                with torch.profiler.record_function("Embedding GAT"):
+                    z = model['gnn'](
+                        z,
+                        last_update,
+                        edge_index,
+                        dataset['data'].t[e_id].to(device),
+                        dataset['data'].msg[e_id].to(device),
+                    )
+            # breakpoint()
+            if decoder == "NCN":
+                # pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                # neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+
+                time_info = (last_update, t)
+                src_re = torch.arange(bs)
+                pos_re = torch.arange(bs, 2*bs)
+                neg_re = torch.arange(2*bs, 3*bs)
+                pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), 2, cn_time_decay=False, time_info=time_info)
+                neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), 2, cn_time_decay=False, time_info=time_info)
+
+            else:
+                pos_out = model['link_pred'](z[0:bs], z[bs:2*bs])
+                neg_out = model['link_pred'](z[0:bs], z[2*bs:3*bs])
+
+
+            # breakpoint()
+            loss = criterion(pos_out, torch.ones_like(pos_out))
+            loss += criterion(neg_out, torch.zeros_like(neg_out))
+
+            with torch.profiler.record_function("backword pass"):
+                loss.backward()
+            optimizer.step()
+            # model['memory'].update_state(src, pos_dst, t, msg)
+            z_m, last_update = model['memory'](n_id, mem_graph_quad[0:2,:], b_t, b_raw_msg, b_isrc, delivery_addr = mem_graph_quad[2])
+            #model['memory'](n_id, b_edge_index, b_t, b_raw_msg, b_isrc)
+            z_m = torch.cat([z_m[remap], z_m[3*bs:]])
+            last_update = torch.cat([last_update[remap], last_update[3*bs:]])
+
+            model['memory'].update_state_v2(
+                mem_graph_quad_uf[2], remap, bs, 
+                src, pos_dst, t, msg, 
+                n_id, last_update, z_m)
+            model['memory'].detach()
+
+            total_loss += float(loss) * batch.num_events
+        
+        
+        
+        max_seen_eid += batch.num_events
+        # break
+    return total_loss/dataset['train_length'], max_seen_eid
+
+
+
+
+
+
+
+
+
+
+
+
+def analyze_mcg_depth_tgn_old(mem_graph_quad):
+    """
+    Computes dependency depth for PRISM-style TGN MCG.
+
+    mem_graph_quad: Tensor [4, E]
+        row 2 = parent index (delivery address)
+    """
+
+    parents = mem_graph_quad[2].long()
+    num_nodes = parents.numel()
+
+    # Initialize depth array
+    depth = torch.zeros(num_nodes, dtype=torch.long, device=parents.device)
+
+    # Since dependencies only go forward in batch order,
+    # a simple DP in order works.
+    for child in range(num_nodes):
+        parent = parents[child].item()
+        if parent >= 0 and parent < child:
+            depth[child] = depth[parent] + 1
+
+    depth_cpu = depth.cpu()
+
+    print("===== TGN-PRISM MCG Depth Stats =====")
+    print("Max depth:", depth_cpu.max().item())
+    print("Mean depth:", depth_cpu.float().mean().item())
+    print("Median depth:", depth_cpu.median().item())
+    print("95th percentile:", torch.quantile(depth_cpu.float(), 0.95).item())
+    print("======================================")
+
+    # Distribution for histogram
+    unique_depths, counts = torch.unique(depth_cpu, return_counts=True)
+    print("\nDepth Distribution:")
+    for d, c in zip(unique_depths.tolist(), counts.tolist()):
+        print(f"Depth {d}: {c}")
+
+    return depth_cpu
+
+
+
+def analyze_mcg_depth_apan(mem_graph_quad):
+    """
+    Robust MCG depth analyzer.
+    Works for APAN and TGN.
+    """
+
+    parents_raw = mem_graph_quad[2].long()
+    num_edges = parents_raw.numel()
+
+    # Child nodes are implicit: 0..num_edges-1
+    children_raw = torch.arange(num_edges, device=parents_raw.device)
+
+    # Collect all node ids involved
+    valid_mask = parents_raw >= 0
+    all_nodes = torch.cat([
+        children_raw,
+        parents_raw[valid_mask]
+    ])
+
+    # Create compact id mapping
+    unique_nodes = torch.unique(all_nodes)
+    id_map = {node.item(): i for i, node in enumerate(unique_nodes)}
+
+    num_nodes = len(unique_nodes)
+
+    # Build adjacency
+    depth = torch.zeros(num_nodes, dtype=torch.long)
+    adj = [[] for _ in range(num_nodes)]
+
+    for child_raw, parent_raw in zip(children_raw.tolist(), parents_raw.tolist()):
+        if parent_raw >= 0:
+            u = id_map[parent_raw]
+            v = id_map[child_raw]
+            adj[u].append(v)
+
+    # Topological DP (nodes already time-ordered in practice)
+    for u in range(num_nodes):
+        for v in adj[u]:
+            depth[v] = max(depth[v], depth[u] + 1)
+
+    depth_cpu = depth.cpu()
+
+    print("===== MCG Depth Stats =====")
+    print("Max depth:", depth_cpu.max().item())
+    print("Mean depth:", depth_cpu.float().mean().item())
+    print("Median depth:", depth_cpu.median().item())
+    print("95th percentile:", torch.quantile(depth_cpu.float(), 0.95).item())
+    print("===========================")
+
+    return depth_cpu
+
+
+
+
+
+# import torch
+from collections import defaultdict
+
+def analyze_mcg_depth_tgn(mem_graph_quad, freq_tesnosr):
+    dst = mem_graph_quad[0].tolist()
+    src = mem_graph_quad[1].tolist()
+    del_addr = mem_graph_quad[2].tolist()
+
+    node_depth = {}
+
+    for i in range(len(dst)):
+        delivered = del_addr[i]
+
+        parents = [src[i], dst[i]]
+
+        parent_depths = [node_depth.get(p, 0) for p in parents]
+
+        node_depth[delivered] = max(
+            node_depth.get(delivered, 0),
+            1 + max(parent_depths)
+        )
+
+    depths = list(node_depth.values())
+    depth_tensor = torch.tensor(depths)
+
+    print("Max node depth:", depth_tensor.max().item())
+    print("Mean:", depth_tensor.float().mean().item())
+    print("Median:", depth_tensor.median().item())
+    print("95th percentile:",
+          torch.quantile(depth_tensor.float(), 0.95).item())
+
+    unique, counts = torch.unique(depth_tensor, return_counts=True)
+    freq_tesnosr[unique] += counts
+
+    _zf = mem_graph_quad[:3].max().item()-depth_tensor.size(0)
+
+    freq_tesnosr[0] +=  _zf
+    # breakpoint()
+
+    # return freq_tesnosr

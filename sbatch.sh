@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -c 8  # Number of Cores per Task
 #SBATCH -p gpu  # Partition
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH -G 1  # Number of GPUs
 
-#SBATCH --constraint=2080ti
+#SBATCH --constraint=a100
 #SBATCH -t 5-00:00:00  # Job time limit
 
 #SBATCH -o slurm-%j.out  # %j = job ID
@@ -83,4 +83,39 @@ conda activate pyg
 
 # python prism_inference_v2.py
 
-python incr_perf.py --data tgbl-wiki --bs 1024  --lr 0.001 --deliver_to  self --num_epoch 2 --patience 2 --num_run 1 --chunk_size 256 --val_neg 1
+# python incr_perf.py --data tgbl-wiki --bs 8192  --lr 0.001 --deliver_to  self --num_epoch 2 --patience 2 --num_run 1 --chunk_size 256 --val_neg 1
+
+# python main.py --data lastfm --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.0001 --mxtt 72 --mxet 96 --val_neg 5 
+
+
+
+#  python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 1 --data tgbl-wiki 
+#  python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 2 --data tgbl-wiki 
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 3 --data tgbl-wiki 
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 4 --data tgbl-wiki 
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 5 --data tgbl-wiki 
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 10 --data tgbl-wiki 
+# python tgn.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001  --val_neg 100 --data tgbl-wiki
+
+
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 1 --data lastfm
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 2 --data lastfm
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 3 --data lastfm
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 4 --data lastfm
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 5 --data lastfm
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 10 --data lastfm
+# python tgn.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001  --val_neg 100 --data lastfm
+
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 1 --data reddit
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 2 --data lastfm
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 3 --data reddit
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 4 --data lastfm
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 5 --data reddit
+# python main.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001 --mxtt 72 --mxet 96 --val_neg 100 --m_pass 10 --data reddit
+# python tgn.py --bs 4096  --num_epoch 30 --patience 200 --num_run 1 --lr 0.001  --val_neg 100 --data reddit
+
+
+# python main.py --decoder NCN --data tgbl-review --bs 4096 --num_epoch 100 --patience 20 --num_run 1 --lr 0.001
+
+
+python main.py --num_epoch 5 --num_run 1 --lr 0.001 --m_pass 3 --debug --data tgbl-wiki --bs 8192
