@@ -14,13 +14,13 @@
 module load conda/latest
 conda activate prism-pyg
 
-# python main.py --data tgbl-wiki --deliver_to self --decoder fc \
+python main.py --data tgbl-wiki --deliver_to self --decoder fc \
+    --bs 2048 --lr 0.001 --num_epoch 200 --patience 10 --num_run 1 \
+    --tensor-store-mode on --cache-data-on-gpu --offload-mode auto
+
+# python main.py --data tgbl-wiki --deliver_to self --decoder NCN \
 #     --bs 8192 --lr 0.001 --num_epoch 100 --patience 10 --num_run 1 \
 #     --tensor-store-mode on --cache-data-on-gpu --offload-mode auto
-
-python main.py --data tgbl-wiki --deliver_to self --decoder NCN \
-    --bs 8192 --lr 0.001 --num_epoch 100 --patience 10 --num_run 1 \
-    --tensor-store-mode on --cache-data-on-gpu --offload-mode auto
 
 
 # python apan.py --bs 64

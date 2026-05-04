@@ -171,7 +171,7 @@ def getMatchDict(od_updated):
 # import torch
 
 def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
-
+    
     # breakpoint()
     N = od_updated.shape[0]
     conds = od_updated[:, 0]
@@ -253,12 +253,12 @@ def vectorized_getMem_graph(od_updated, bs, max_seen_eid):
 
     kept_i_valid = torch.cat(kv_list, dim=0)
     kept_i_match = torch.cat(km_list, dim=0)
-
+    
     # if(torch.equal(kept_i_match_2, kept_i_match)) and torch.equal(kept_i_valid, kept_i_valid_2):
     #     print("Same")
     # else:
     #     print("different")
-
+    
  
 
 

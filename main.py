@@ -23,6 +23,7 @@ import sys
 import os.path as osp
 from pathlib import Path
 import argparse
+import hashlib
 
 def main():
     custom_parser = argparse.ArgumentParser(add_help=False)
@@ -124,6 +125,12 @@ def main():
     MAX_EXEC_TIME = args.mxet*60*60
     debug = args.debug
     APAN = args.deliver_to == 'neighbor'
+    job_hint = os.environ.get("SLURM_JOB_ID", "")
+    run_fingerprint = "|".join([
+        DATA, str(SEED), str(os.getpid()), str(timeit.default_timer()), job_hint
+    ])
+    run_tag = hashlib.sha1(run_fingerprint.encode("utf-8")).hexdigest()[:8]
+    print(f"INFO: Run tag: {run_tag}")
 
     if args.decoder == "NCN":
         HOP_NUM = 2
@@ -257,7 +264,9 @@ def main():
 
         # define an early stopper
         save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
-        save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}'
+        save_model_id = (
+            f'{MODEL_NAME}_{DATA}_{args.deliver_to}_{args.decoder}_{args.embedding}_{SEED}_{run_idx}_{run_tag}'
+        )
         early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
                                         tolerance=TOLERANCE, patience=PATIENCE)
         if args.data == "superuser":
