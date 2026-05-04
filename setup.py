@@ -1,5 +1,5 @@
 import os
-from setuptools import setup
+from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CppExtension
 
 # Build fat binaries once so compiled extensions run across common cluster GPUs:
@@ -7,7 +7,19 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CppExtensio
 os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.5;8.0;8.6;8.9;9.0+PTX")
 
 setup(
-    name="prism_extensions",
+    name="prism",
+    version="0.1.0",
+    description="PRISM: Parallel Refinement of Intra-Batch Staleness in MTGNN",
+    packages=find_packages(include=["prism", "prism.*", "modules", "modules.*"]),
+    python_requires=">=3.10",
+    install_requires=[
+        "numpy",
+        "torch",
+        "torch-geometric",
+        "py-tgb",
+        "tqdm",
+        "pandas",
+    ],
     ext_modules=[
         CppExtension(
             "preprocessor",
@@ -35,6 +47,10 @@ setup(
             extra_link_args=["-fopenmp"],
         ),
     ],
+    entry_points={
+        "console_scripts": [
+            "prism-negatives=prism.negatives:main",
+        ]
+    },
     cmdclass={"build_ext": BuildExtension},
 )
-

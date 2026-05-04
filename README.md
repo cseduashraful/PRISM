@@ -93,6 +93,97 @@ To run with disk offloading
 python dart_linkpred.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
 ```
 
+## 📦 Using PRISM As A Python Package
+
+You can use PRISM either with the provided conda environment, or as a lightweight extension on top of an existing `torch + pyg + tgb` setup.
+
+### Option A: With `environment.yml`
+
+```bash
+conda env create -f environment.yml
+conda activate prism-pyg
+python setup.py build_ext --inplace
+pip install -e .
+```
+
+### Option B: Existing Environment (Lightweight Extension)
+
+If you already have compatible `torch`, `torch-geometric`, and `py-tgb` installed:
+
+```bash
+python setup.py build_ext --inplace
+pip install -e .
+```
+
+Then in Python:
+
+```python
+from prism import PrismConfig, PrismExperiment
+
+cfg = PrismConfig(
+    data="tgbl-wiki",
+    batch_size=1024,
+    lr=1e-3,
+    decoder="fc",
+    deliver_to="self",
+    val_neg=5,
+    load_ns=True,   # use offline negatives if available
+)
+exp = PrismExperiment(cfg).setup()
+history = exp.train()
+val = exp.validate()
+tst = exp.test()
+```
+
+## 🗂️ Supported Datasets
+
+- Built-in PRISM/TGB datasets (e.g., `tgbl-wiki`) via `PrismConfig(data="...")`.
+- Custom dataset in tgbl-wiki-like temporal format (`src`, `dst`, `t`, optional `msg*` columns):
+
+```python
+cfg = PrismConfig(
+    dataset_csv="path/to/your_temporal_edges.csv",
+    batch_size=1024,
+    load_ns=False,  # no precomputed negatives required
+    val_neg=20,     # random negatives per positive for val/test by default
+)
+exp = PrismExperiment(cfg).setup()
+```
+
+- Directory-form datasets like GNNFlow `REDDIT` layout (`edges.csv` + optional `edge_features.pt`):
+
+```python
+cfg = PrismConfig(
+    dataset_dir="/work/pi_mserafini_umass_edu/ashraful/disgnn/GNNFlow/data/REDDIT",
+    batch_size=1024,
+    load_ns=False,
+    val_neg=20,
+)
+exp = PrismExperiment(cfg).setup()
+```
+
+When offline negatives are not provided, PRISM automatically falls back to random negatives for validation/test.
+
+## 🎯 Offline Negative Sample Generation
+
+PRISM exposes an interface to precompute validation/test negatives:
+
+```bash
+prism-negatives --data tgbl-wiki --num-neg 100 --strategy rnd
+```
+
+Or from Python:
+
+```python
+from prism import generate_offline_negative_samples
+
+generate_offline_negative_samples(
+    dataset_name="tgbl-wiki",
+    num_neg_per_pos=100,   # k random negatives per positive by default
+    strategy="rnd",        # or "hist_rnd"
+)
+```
+
 ## 🧾 Argument Descriptions
 
 | Argument       | Description                                                                              |

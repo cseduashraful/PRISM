@@ -754,6 +754,8 @@ def test_new(targs, max_seen_id, split_mode):
     decoder = targs['decoder']
     embedding = targs['embedding']
     val_neg = targs['val_neg']
+    min_dst_idx = targs.get('min_dst_idx', int(data.dst.min()))
+    max_dst_idx = targs.get('max_dst_idx', int(data.dst.max()))
 
 
 
@@ -775,15 +777,23 @@ def test_new(targs, max_seen_id, split_mode):
             pos_batch.msg,
         )
 
-        neg_batch_list = neg_sampler.query_batch(pos_src, pos_dst, pos_t, split_mode=split_mode)
-        min_len = min(len(inner) for inner in neg_batch_list)
-        neg_batch_tensor = torch.tensor([inner[:min_len] for inner in neg_batch_list])
-        neg_batch_tensor_T = neg_batch_tensor.T
-        # print()
-        # breakpoint()
-        if val_neg > -1:
-            idx = torch.randperm(neg_batch_tensor_T.size(0))[:val_neg]
-            neg_batch_tensor_T = neg_batch_tensor_T[idx]
+        if neg_sampler is not None:
+            neg_batch_list = neg_sampler.query_batch(pos_src, pos_dst, pos_t, split_mode=split_mode)
+            min_len = min(len(inner) for inner in neg_batch_list)
+            neg_batch_tensor = torch.tensor([inner[:min_len] for inner in neg_batch_list])
+            neg_batch_tensor_T = neg_batch_tensor.T
+            if val_neg > -1:
+                idx = torch.randperm(neg_batch_tensor_T.size(0))[:val_neg]
+                neg_batch_tensor_T = neg_batch_tensor_T[idx]
+        else:
+            # Default fallback when offline negatives are unavailable.
+            num_rand_neg = val_neg if val_neg > 0 else 100
+            neg_batch_tensor_T = torch.randint(
+                min_dst_idx,
+                max_dst_idx + 1,
+                (num_rand_neg, pos_src.shape[0]),
+                dtype=torch.long,
+            )
         num_neg = neg_batch_tensor_T.shape[0]
         bs = pos_src.shape[0]
         preds = []
@@ -941,13 +951,18 @@ def test_new(targs, max_seen_id, split_mode):
         # breakpoint()
         for i in range(all_y_preds.size(0)):
             y_pred = all_y_preds[i]  # shape [1000]
-            
-            input_dict = {
-                "y_pred_pos": np.array([y_pred[0].item()]),  # scalar wrapped in array
-                "y_pred_neg": np.array(y_pred[1:].cpu()),    # shape [999]
-                "eval_metric": [metric],
-            }
-            perf_list.append(evaluator.eval(input_dict)[metric])
+            if evaluator is not None:
+                input_dict = {
+                    "y_pred_pos": np.array([y_pred[0].item()]),
+                    "y_pred_neg": np.array(y_pred[1:].cpu()),
+                    "eval_metric": [metric],
+                }
+                perf_list.append(evaluator.eval(input_dict)[metric])
+            else:
+                pos_score = y_pred[0]
+                neg_scores = y_pred[1:]
+                rank = 1 + (neg_scores >= pos_score).sum().item()
+                perf_list.append(1.0 / float(rank))
         if deliver_to == "neighbor":
             root_ts = torch.cat([pos_t, pos_t], dim = 0).double().to(device)
             root_nodes = torch.cat([pos_src, pos_dst], dim = 0).to(device)

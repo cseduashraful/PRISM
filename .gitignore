@@ -16,5 +16,9 @@ logs/unchecked/
 runs/
 *.npy
 build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
 *.so
 sbatch.sh
