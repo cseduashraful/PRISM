@@ -1,0 +1,34 @@
+name: prism-pyg
+channels:
+  - pytorch
+  - nvidia
+  - pyg
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy=1.26.*
+  - scipy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - pyyaml
+  - tqdm
+  - requests
+  - beautifulsoup4
+  - gdown
+  - clint
+  - pybind11
+  - ninja
+  - setuptools
+  - cmake
+  - cxx-compiler
+  - gcc_linux-64
+  - gxx_linux-64
+  - pytorch=2.3.*
+  - pytorch-cuda=12.1
+  - pytorch-geometric=2.5.*
+  - cuda-nvcc=12.1
+  - pip:
+      - py-tgb==2.0.0
