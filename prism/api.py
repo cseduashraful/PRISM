@@ -204,13 +204,17 @@ class PrismExperiment:
             self._build_run(run_seed, run_idx)
             self._test_consumed = False
             history = {"loss": [], "val": [], "time": []}
+            train_val_start = timeit.default_timer()
+            train_only_time = 0.0
             self.phase = "train"
             self.phase_max_seen_eid = {"train": -1, "val": -1, "test": -1}
             self.memory_progress_eid = -1
             for epoch in range(1, epochs + 1):
                 start = timeit.default_timer()
                 # Keep parity with main.py: trainer expects epoch-local eid offset.
+                train_start = timeit.default_timer()
                 loss, max_seen_eid = actrain(self.targs, -1)
+                train_only_time += timeit.default_timer() - train_start
                 val, val_end_eid = test(self.targs, max_seen_eid, split_mode="val")
                 self.phase_max_seen_eid["train"] = max_seen_eid
                 self.phase_max_seen_eid["val"] = val_end_eid
@@ -222,11 +226,14 @@ class PrismExperiment:
                     break
             self.early_stopper.load_checkpoint(self.model)
             best_val = max(history["val"]) if history["val"] else float("nan")
+            train_val_time = timeit.default_timer() - train_val_start
             run_result = {
                 "run_idx": run_idx,
                 "seed": run_seed,
                 "history": history,
                 "best_val": best_val,
+                "train_time": train_only_time,
+                "train_val_time": train_val_time,
                 "phase_max_seen_eid": dict(self.phase_max_seen_eid),
             }
             if self.cfg.run_test:
@@ -252,13 +259,21 @@ class PrismExperiment:
             return self.last_train_result
 
         best_vals = [r["best_val"] for r in all_runs]
+        train_only_times = [r["train_time"] for r in all_runs]
+        train_times = [r["train_val_time"] for r in all_runs]
         sample_val_std = statistics.stdev(best_vals) if len(best_vals) > 1 else 0.0
+        sample_train_only_std = statistics.stdev(train_only_times) if len(train_only_times) > 1 else 0.0
+        sample_train_time_std = statistics.stdev(train_times) if len(train_times) > 1 else 0.0
         self.last_train_result = {
             "num_runs": self.cfg.num_runs,
             "runs": all_runs,
             "summary": {
                 "best_val_mean": statistics.mean(best_vals),
                 "best_val_std": sample_val_std,
+                "train_time_mean": statistics.mean(train_only_times),
+                "train_time_std": sample_train_only_std,
+                "train_val_time_mean": statistics.mean(train_times),
+                "train_val_time_std": sample_train_time_std,
             },
         }
         if self.cfg.run_test:
