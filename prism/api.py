@@ -206,22 +206,36 @@ class PrismExperiment:
             history = {"loss": [], "val": [], "time": []}
             train_val_start = timeit.default_timer()
             train_only_time = 0.0
+            metric_name = self.dataset.get("metric", "mrr")
+            print("-------------------------------------------------------------------------------")
+            print(f"INFO: >>>>> Run: {run_idx} <<<<<")
+            print(f"INFO: fixed random seed: {run_seed}")
             self.phase = "train"
             self.phase_max_seen_eid = {"train": -1, "val": -1, "test": -1}
             self.memory_progress_eid = -1
             for epoch in range(1, epochs + 1):
-                start = timeit.default_timer()
+                epoch_start = timeit.default_timer()
                 # Keep parity with main.py: trainer expects epoch-local eid offset.
                 train_start = timeit.default_timer()
                 loss, max_seen_eid = actrain(self.targs, -1)
-                train_only_time += timeit.default_timer() - train_start
+                epoch_train_time = timeit.default_timer() - train_start
+                train_only_time += epoch_train_time
                 val, val_end_eid = test(self.targs, max_seen_eid, split_mode="val")
                 self.phase_max_seen_eid["train"] = max_seen_eid
                 self.phase_max_seen_eid["val"] = val_end_eid
                 self.memory_progress_eid = val_end_eid
                 history["loss"].append(loss)
                 history["val"].append(val)
-                history["time"].append(timeit.default_timer() - start)
+                epoch_elapsed = timeit.default_timer() - epoch_start
+                history["time"].append(epoch_elapsed)
+                train_val_elapsed = timeit.default_timer() - train_val_start
+                print(
+                    f"Epoch: {epoch:02d}, Loss: {loss:.4f}, "
+                    f"{metric_name}: {val:.4f}, "
+                    f"Train Time (s): {epoch_train_time:.4f}, "
+                    f"Epoch Elapsed (s): {epoch_elapsed:.4f}, "
+                    f"Train+Val Elapsed (s): {train_val_elapsed:.4f}"
+                )
                 if self.early_stopper.step_check(val, self.model):
                     break
             self.early_stopper.load_checkpoint(self.model)
