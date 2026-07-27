@@ -1,9 +1,6 @@
 import sampler
 import torch
 import chunkio
-import preprocessor
-from uuid import uuid4
-from modules.recent_sampler import Recent_K_Sampler
 class GRN_Stream:
     @classmethod
     def build(
@@ -18,70 +15,22 @@ class GRN_Stream:
         apan=False,
         skip_cnt=1,
     ):
-        """
-        Unified sampler builder.
-        Returns a tuple: (sampler_obj, backend_name)
-        backend_name is either 'disk-offload' or 'in-memory'.
-        """
-        def _build_disk():
-            folder_name = f"cache_{uuid4().hex[:8]}"
-            outdir = "preproc_out/" + folder_name
-            tci_stream = chunkio.preprocess_streaming(
-                data.src.tolist(),
-                data.dst.tolist(),
-                data.t.double().tolist(),
-                torch.arange(data.src.shape[0]).tolist(),
-                data.num_nodes,
+        from modules.sampler_builder import SamplerBuildSpec, build_sampler_backend
+
+        result = build_sampler_backend(
+            data,
+            SamplerBuildSpec(
+                k=k,
                 chunk_size=chunk_size,
                 max_chunk_per_node=max_chunk_per_node,
-                duplicate_undirected=True,
-                out_dir=outdir,
-                num_shards=256,
-            )
-            return cls(
-                tci_stream,
-                max_chunk_per_node,
-                k,
-                data.num_nodes,
-                chunk_size,
-                outdir,
+                offload_mode=offload_mode,
                 cache_size=cache_size,
                 device=device,
                 apan=apan,
                 skip_cnt=skip_cnt,
-            ), "disk-offload"
-
-        if offload_mode == "on":
-            return _build_disk()
-
-        try:
-            tci_data = preprocessor.preprocess(
-                data.src.tolist(),
-                data.dst.tolist(),
-                data.t.double().tolist(),
-                torch.arange(data.src.shape[0]).tolist(),
-                data.num_nodes,
-                chunk_size,
-                max_chunk_per_node,
-            )
-            sampler_obj = Recent_K_Sampler(
-                tci_data,
-                max_chunk_per_node,
-                k,
-                data.num_nodes,
-                device=device,
-                apan=apan,
-                skip_cnt=skip_cnt,
-            )
-            return sampler_obj, "in-memory"
-        except RuntimeError as exc:
-            if offload_mode != "auto":
-                raise
-            if "out of memory" not in str(exc).lower():
-                raise
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            return _build_disk()
+            ),
+        )
+        return result.sampler, result.backend
 
     def __init__(self, sampler_data, max_chunk_per_node, k, num_nodes, chunk_size, outdir, cache_size = 100, device='cuda', apan = False, skip_cnt = 1):
         self.device = device
@@ -398,6 +347,5 @@ class GRN_Stream:
 
         # n_ids = torch.cat([root_node, on])
         return n_ids, valid_eids, edge_index
-
 
 

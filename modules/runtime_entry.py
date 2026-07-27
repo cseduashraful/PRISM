@@ -18,7 +18,7 @@ from modules.msg_agg import MeanAggregator as Agg
 from modules.msg_func import IdentityMessage
 from modules.neg_sampler import NegLinkSamplerDest
 from modules.NCNDecoder.NCNPred import NCNPredictor
-from modules.grnstream import GRN_Stream
+from modules.sampler_builder import SamplerBuildSpec, build_sampler_backend
 
 
 @dataclass
@@ -233,20 +233,22 @@ def build_sampler(
 ) -> SamplerBundle:
     print("Converting data to tci data.")
     start_time = timeit.default_timer()
-    sampler, backend = GRN_Stream.build(
-        data=dataset_bundle.data,
-        k=config.k_value,
-        chunk_size=config.args.chunk_size,
-        max_chunk_per_node=dataset_bundle.max_chunk_per_node,
-        offload_mode=config.args.offload_mode,
-        cache_size=config.batch_size,
-        device=device,
-        apan=config.apan,
-        skip_cnt=config.args.skip_cnt,
+    result = build_sampler_backend(
+        dataset_bundle.data,
+        SamplerBuildSpec(
+            k=config.k_value,
+            chunk_size=config.args.chunk_size,
+            max_chunk_per_node=dataset_bundle.max_chunk_per_node,
+            offload_mode=config.args.offload_mode,
+            cache_size=config.batch_size,
+            device=device,
+            apan=config.apan,
+            skip_cnt=config.args.skip_cnt,
+        ),
     )
     return SamplerBundle(
-        sampler=sampler,
-        backend=backend,
+        sampler=result.sampler,
+        backend=result.backend,
         build_time_seconds=timeit.default_timer() - start_time,
     )
 

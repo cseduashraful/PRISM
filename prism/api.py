@@ -10,7 +10,6 @@ import torch
 from tgb.utils.utils import set_random_seed
 
 from modules.data_utils import read_data
-from modules.grnstream import GRN_Stream
 from modules.memory_module import DAATGNMemory, DA_APANMemory
 from modules.msg_func import IdentityMessage
 from modules.msg_agg import MeanAggregator as Agg
@@ -18,6 +17,7 @@ from modules.emb_module import GraphAttentionEmbedding, TimeEmbedding
 from modules.decoder import LinkPredictor
 from modules.NCNDecoder.NCNPred import NCNPredictor
 from modules.neg_sampler import NegLinkSamplerDest
+from modules.sampler_builder import SamplerBuildSpec, build_sampler_backend
 from modules.train_utils import train as actrain, test_new as test
 from modules.early_stopping import EarlyStopMonitor
 from .datasets import dataset_from_csv, dataset_from_directory
@@ -118,17 +118,21 @@ class PrismExperiment:
         max_freq = counts.max().item()
         max_chunk_per_node = 1 + max_freq // cfg.chunk_size
 
-        self.sampler, self.sampler_backend = GRN_Stream.build(
-            data=self.data,
-            k=cfg.k_value,
-            chunk_size=cfg.chunk_size,
-            max_chunk_per_node=max_chunk_per_node,
-            offload_mode=cfg.offload_mode,
-            cache_size=cfg.batch_size,
-            device=self.device,
-            apan=(cfg.deliver_to == "neighbor"),
-            skip_cnt=cfg.skip_cnt,
+        sampler_result = build_sampler_backend(
+            self.data,
+            SamplerBuildSpec(
+                k=cfg.k_value,
+                chunk_size=cfg.chunk_size,
+                max_chunk_per_node=max_chunk_per_node,
+                offload_mode=cfg.offload_mode,
+                cache_size=cfg.batch_size,
+                device=self.device,
+                apan=(cfg.deliver_to == "neighbor"),
+                skip_cnt=cfg.skip_cnt,
+            ),
         )
+        self.sampler = sampler_result.sampler
+        self.sampler_backend = sampler_result.backend
         self._data_ready = True
 
     def _build_run(self, run_seed: int, run_idx: int):
