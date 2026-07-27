@@ -20,6 +20,97 @@ from torch_scatter import scatter_add
 TGNMessageStoreType = Dict[int, Tuple[Tensor, Tensor, Tensor, Tensor]]
 
 
+class DAATGNMemoryCore(torch.nn.Module):
+    def __init__(
+        self,
+        raw_msg_dim: int,
+        memory_dim: int,
+        time_dim: int,
+        message_module: Callable,
+        aggregator_module: Callable,
+        memory_updater_cell: str = "gru",
+    ):
+        super().__init__()
+        self.raw_msg_dim = raw_msg_dim
+        self.memory_dim = memory_dim
+        self.time_dim = time_dim
+        self.msg_s_module = message_module
+        self.msg_d_module = copy.deepcopy(message_module)
+        self.aggr_module = aggregator_module
+        self.time_enc = TimeEncoder(time_dim)
+        if memory_updater_cell == "gru":
+            self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
+        elif memory_updater_cell == "rnn":
+            self.memory_updater = RNNCell(message_module.out_channels, memory_dim)
+        else:
+            raise ValueError(
+                "Undefined memory updater!!! Memory updater can be either 'gru' or 'rnn'."
+            )
+
+    def reset_parameters(self):
+        if hasattr(self.msg_s_module, "reset_parameters"):
+            self.msg_s_module.reset_parameters()
+        if hasattr(self.msg_d_module, "reset_parameters"):
+            self.msg_d_module.reset_parameters()
+        if hasattr(self.aggr_module, "reset_parameters"):
+            self.aggr_module.reset_parameters()
+        self.time_enc.reset_parameters()
+        self.memory_updater.reset_parameters()
+
+
+class DAATGNRuntimeState(torch.nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        memory_dim: int,
+        raw_msg_dim: int,
+        tensor_store_mode: str,
+    ):
+        super().__init__()
+        self.num_nodes = num_nodes
+        self.raw_msg_dim = raw_msg_dim
+        self.tensor_store_mode = tensor_store_mode
+        self.register_buffer("memory", torch.empty(num_nodes, memory_dim))
+        self.register_buffer("last_update", torch.empty(num_nodes, dtype=torch.long))
+        self.register_buffer("assoc", torch.empty(num_nodes, dtype=torch.long))
+        self.msg_s_store = {}
+        self.msg_d_store = {}
+        self.msg_s_tensor_store = {}
+        self.msg_d_tensor_store = {}
+
+    @property
+    def device(self) -> torch.device:
+        return self.memory.device
+
+    def reset(self):
+        zeros(self.memory)
+        zeros(self.last_update)
+        self.reset_message_store()
+
+    def detach(self):
+        self.memory.detach_()
+
+    def reset_message_store(self):
+        if self.tensor_store_mode == "on":
+            self.msg_s_store = {}
+            self.msg_d_store = {}
+        else:
+            i = self.memory.new_empty((0,), device=self.device, dtype=torch.long)
+            msg = self.memory.new_empty((0, self.raw_msg_dim), device=self.device)
+            self.msg_s_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
+            self.msg_d_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
+        if self.tensor_store_mode in {"on", "verify"}:
+            self.msg_s_tensor_store = self.empty_tensor_store()
+            self.msg_d_tensor_store = self.empty_tensor_store()
+        else:
+            self.msg_s_tensor_store = {}
+            self.msg_d_tensor_store = {}
+
+    def empty_tensor_store(self):
+        i = self.memory.new_empty((0,), device=self.device, dtype=torch.long)
+        t = self.memory.new_empty((0,), device=self.device, dtype=self.last_update.dtype)
+        msg = self.memory.new_empty((0, self.raw_msg_dim), device=self.device)
+        return {"nodes": i, "src": i, "dst": i, "t": t, "raw_msg": msg}
 
 
 class DAATGNMemory(torch.nn.Module):
@@ -42,25 +133,6 @@ class DAATGNMemory(torch.nn.Module):
         self.time_dim = time_dim
         self.layer = layer
 
-        self.msg_s_module = message_module
-        self.msg_d_module = copy.deepcopy(message_module)
-        self.aggr_module = aggregator_module
-        self.time_enc = TimeEncoder(time_dim)
-        # self.gru = GRUCell(message_module.out_channels, memory_dim)
-        if memory_updater_cell == "gru":  # for TGN
-            self.memory_updater = GRUCell(message_module.out_channels, memory_dim)
-        elif memory_updater_cell == "rnn":  # for JODIE & DyRep
-            self.memory_updater = RNNCell(message_module.out_channels, memory_dim)
-        else:
-            raise ValueError(
-                "Undefined memory updater!!! Memory updater can be either 'gru' or 'rnn'."
-            )
-
-        self.register_buffer("memory", torch.empty(num_nodes, memory_dim))
-        last_update = torch.empty(self.num_nodes, dtype=torch.long)
-        self.register_buffer("last_update", last_update)
-        self.register_buffer("_assoc", torch.empty(num_nodes, dtype=torch.long))
-
         # `off`    : original dict path only.
         # `on`     : tensor-only fast path (no dict maintenance overhead).
         # `verify` : maintain both stores and assert parity each call.
@@ -68,38 +140,103 @@ class DAATGNMemory(torch.nn.Module):
         if self.tensor_store_mode not in {"off", "on", "verify"}:
             self.tensor_store_mode = "off"
 
-        self.msg_s_store = {}
-        self.msg_d_store = {}
-        self.msg_s_tensor_store = {}
-        self.msg_d_tensor_store = {}
+        self.core = DAATGNMemoryCore(
+            raw_msg_dim=raw_msg_dim,
+            memory_dim=memory_dim,
+            time_dim=time_dim,
+            message_module=message_module,
+            aggregator_module=aggregator_module,
+            memory_updater_cell=memory_updater_cell,
+        )
+        self.state = DAATGNRuntimeState(
+            num_nodes=num_nodes,
+            memory_dim=memory_dim,
+            raw_msg_dim=raw_msg_dim,
+            tensor_store_mode=self.tensor_store_mode,
+        )
 
         self.reset_parameters()
 
     @property
     def device(self) -> torch.device:
-        return self.time_enc.lin.weight.device
+        return self.core.time_enc.lin.weight.device
+
+    @property
+    def memory(self) -> Tensor:
+        return self.state.memory
+
+    @property
+    def last_update(self) -> Tensor:
+        return self.state.last_update
+
+    @property
+    def _assoc(self) -> Tensor:
+        return self.state.assoc
+
+    @property
+    def msg_s_module(self):
+        return self.core.msg_s_module
+
+    @property
+    def msg_d_module(self):
+        return self.core.msg_d_module
+
+    @property
+    def aggr_module(self):
+        return self.core.aggr_module
+
+    @property
+    def time_enc(self):
+        return self.core.time_enc
+
+    @property
+    def memory_updater(self):
+        return self.core.memory_updater
+
+    @property
+    def msg_s_store(self):
+        return self.state.msg_s_store
+
+    @msg_s_store.setter
+    def msg_s_store(self, value):
+        self.state.msg_s_store = value
+
+    @property
+    def msg_d_store(self):
+        return self.state.msg_d_store
+
+    @msg_d_store.setter
+    def msg_d_store(self, value):
+        self.state.msg_d_store = value
+
+    @property
+    def msg_s_tensor_store(self):
+        return self.state.msg_s_tensor_store
+
+    @msg_s_tensor_store.setter
+    def msg_s_tensor_store(self, value):
+        self.state.msg_s_tensor_store = value
+
+    @property
+    def msg_d_tensor_store(self):
+        return self.state.msg_d_tensor_store
+
+    @msg_d_tensor_store.setter
+    def msg_d_tensor_store(self, value):
+        self.state.msg_d_tensor_store = value
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
-        if hasattr(self.msg_s_module, "reset_parameters"):
-            self.msg_s_module.reset_parameters()
-        if hasattr(self.msg_d_module, "reset_parameters"):
-            self.msg_d_module.reset_parameters()
-        if hasattr(self.aggr_module, "reset_parameters"):
-            self.aggr_module.reset_parameters()
-        self.time_enc.reset_parameters()
-        self.memory_updater.reset_parameters()
+        self.core.reset_parameters()
         self.reset_state()
 
     def reset_state(self):
         """Resets the memory to its initial state."""
-        zeros(self.memory)
-        zeros(self.last_update)
-        self._reset_message_store()
+        self.state.reset()
 
     def detach(self):
         """Detaches the memory from gradient computation."""
-        self.memory.detach_()
+        self.state.detach()
         
     def mem_graph(self, ei_src, ei_dst, pos_node_s, pos_node_d):
         batch_size = pos_node_s.size(0)
@@ -226,25 +363,10 @@ class DAATGNMemory(torch.nn.Module):
     #         self._update_memory(n_id)
 
     def _reset_message_store(self):
-        if self.tensor_store_mode == "on":
-            # In speed mode we bypass dict-based message store entirely.
-            self.msg_s_store = {}
-            self.msg_d_store = {}
-        else:
-            i = self.memory.new_empty((0,), device=self.device, dtype=torch.long)
-            msg = self.memory.new_empty((0, self.raw_msg_dim), device=self.device)
-            # Message store format: (src, dst, t, msg)
-            self.msg_s_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
-            self.msg_d_store = {j: (i, i, i, msg) for j in range(self.num_nodes)}
-        if self.tensor_store_mode in {"on", "verify"}:
-            self.msg_s_tensor_store = self._empty_tensor_store()
-            self.msg_d_tensor_store = self._empty_tensor_store()
+        self.state.reset_message_store()
 
     def _empty_tensor_store(self):
-        i = self.memory.new_empty((0,), device=self.device, dtype=torch.long)
-        t = self.memory.new_empty((0,), device=self.device, dtype=self.last_update.dtype)
-        msg = self.memory.new_empty((0, self.raw_msg_dim), device=self.device)
-        return {"nodes": i, "src": i, "dst": i, "t": t, "raw_msg": msg}
+        return self.state.empty_tensor_store()
 
     def _empty_msg_result(self, msg_module: Callable):
         msg_dim = getattr(msg_module, "out_channels", self.raw_msg_dim + 2 * self.memory_dim + self.time_dim)
