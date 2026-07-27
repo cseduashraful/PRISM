@@ -22,3 +22,5 @@ dist/
 pip-wheel-metadata/
 *.so
 sbatch.sh
+datasets/
+inference_preproc_out/
