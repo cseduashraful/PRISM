@@ -64,6 +64,17 @@ python main.py
 python main.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
 ```
 
+There is also a dedicated single-GPU lifecycle wrapper script that uses the
+`SingleGPUExperiment` module directly while keeping `main.py` unchanged:
+
+```bash
+python run_single_gpu_experiment.py --data tgbl-wiki --bs 1024 --lr 0.001 --deliver_to neighbor --val_neg 5
+```
+
+Use:
+- `main.py` for the existing default CLI path.
+- `run_single_gpu_experiment.py` when you want to exercise the explicit `setup -> train -> validate -> test` single-GPU lifecycle wrapper.
+
 `main.py` now supports automatic sampler disk offloading with `--offload-mode auto` (default).  
 Modes:
 - `auto`: try in-memory sampler first, fall back to disk offloading on OOM.
