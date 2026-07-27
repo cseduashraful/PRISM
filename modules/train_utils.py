@@ -4,6 +4,8 @@ from tqdm import tqdm
 # from apan_mem_wrapper import call_cuda_kernel as apan_g
 import mem_update_graph
 
+from modules.training_runtime import TrainRuntime
+
 
 def _cached_or_host_lookup(cache_tensor, host_tensor, idx, device):
     idx_long = idx.long()
@@ -468,33 +470,35 @@ def append_unique_rows(od, new_rows):
     return torch.cat([od, new_rows[mask]], dim=0)
 
 
-def train(targs, max_seen_id):
-    model = targs['model']
+def train(runtime: TrainRuntime, max_seen_id):
+    model_bundle = runtime.model_bundle
+    model = model_bundle.model
     model['memory'].train()
     model['gnn'].train()
     model['link_pred'].train()
     model['memory'].reset_state()
 
-    optimizer = targs['optimizer']
-    criterion = targs['criterion']
+    optimizer = model_bundle.optimizer
+    criterion = model_bundle.criterion
 
-    dataset = targs['dataset']
-    data = dataset['data']
-    data_cache = targs.get('data_cache') or {}
+    dataset_runtime = runtime.dataset_runtime
+    dataset = dataset_runtime.dataset
+    data = dataset_runtime.data
+    data_cache = dataset_runtime.data_cache or {}
     cached_t = data_cache.get('t')
     cached_msg = data_cache.get('msg')
     cached_src = data_cache.get('src')
     train_loader = dataset['train_dataloader']
-    device = targs['device']
-    min_dst_idx = targs['min_dst_idx']
-    max_dst_idx = targs['max_dst_idx']
-    neighbor_loader = targs['sampler']
+    device = runtime.device
+    min_dst_idx = dataset_runtime.min_dst_idx
+    max_dst_idx = dataset_runtime.max_dst_idx
+    neighbor_loader = runtime.sampler_runtime.sampler
 
-    neg_sampler = targs['neg_sampler']
-    known_dsts = targs['known_dsts']
-    deliver_to = targs['deliver_to']
-    decoder = targs['decoder']
-    embedding = targs['embedding']
+    neg_sampler = runtime.neg_sampler
+    known_dsts = dataset_runtime.known_dsts
+    deliver_to = runtime.deliver_to
+    decoder = runtime.decoder
+    embedding = runtime.embedding
 
 
     total_loss = 0
@@ -565,7 +569,7 @@ def train(targs, max_seen_id):
             unique_eids = unique_keys[:, 2]  # this is just eid column
             b_t_unique = _cached_or_host_lookup(cached_t, data.t, unique_eids, device)
             b_raw_msg_unique = _cached_or_host_lookup(cached_msg, data.msg, unique_eids, device)
-            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=data)
                 
 
 
@@ -597,7 +601,7 @@ def train(targs, max_seen_id):
             optimizer.step()
 
             # z, last_update = model['memory'](n_id, mem_graph_quad, b_t, b_raw_msg)
-            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+            z, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=data)
             
             store_eid = store_quad[3]
             # breakpoint()
@@ -721,7 +725,7 @@ def train(targs, max_seen_id):
 
 
 @torch.no_grad()
-def test_new(targs, max_seen_id, split_mode):
+def test_new(runtime: TrainRuntime, max_seen_id, split_mode):
     r"""
     Evaluated the dynamic link prediction
     Evaluation happens as 'one vs. many', meaning that each positive edge is evaluated against many negative edges
@@ -733,29 +737,31 @@ def test_new(targs, max_seen_id, split_mode):
     Returns:
         perf_metric: the result of the performance evaluation
     """
-    model = targs['model']
-    neighbor_loader = targs['sampler']
-    dataset = targs['dataset']
-    data = dataset['data']
-    data_cache = targs.get('data_cache') or {}
+    model_bundle = runtime.model_bundle
+    model = model_bundle.model
+    neighbor_loader = runtime.sampler_runtime.sampler
+    dataset_runtime = runtime.dataset_runtime
+    dataset = dataset_runtime.dataset
+    data = dataset_runtime.data
+    data_cache = dataset_runtime.data_cache or {}
     cached_t = data_cache.get('t')
     cached_msg = data_cache.get('msg')
     cached_src = data_cache.get('src')
-    deliver_to = targs['deliver_to']
+    deliver_to = runtime.deliver_to
     if split_mode == 'val':
         loader = dataset['val_dataloader']
     else:
         loader = dataset['test_dataloader']
-    device = targs['device']
+    device = runtime.device
 
     metric = dataset['metric']
     evaluator = dataset['evaluator']
     neg_sampler = dataset['neg_sampler']
-    decoder = targs['decoder']
-    embedding = targs['embedding']
-    val_neg = targs['val_neg']
-    min_dst_idx = targs.get('min_dst_idx', int(data.dst.min()))
-    max_dst_idx = targs.get('max_dst_idx', int(data.dst.max()))
+    decoder = runtime.decoder
+    embedding = runtime.embedding
+    val_neg = runtime.val_neg
+    min_dst_idx = dataset_runtime.min_dst_idx
+    max_dst_idx = dataset_runtime.max_dst_idx
 
 
 
@@ -844,7 +850,7 @@ def test_new(targs, max_seen_id, split_mode):
                 unique_eids = unique_keys[:, 2]  # this is just eid column
                 b_t_unique = _cached_or_host_lookup(cached_t, data.t, unique_eids, device)
                 b_raw_msg_unique = _cached_or_host_lookup(cached_msg, data.msg, unique_eids, device)
-                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+                z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=data)
                 # _apply_intra_batch_info(mem_graph_quad, n_id, b_t_unique, b_raw_msg_unique, old_mem, unique_keys, inverse_indices)
 
 
@@ -996,7 +1002,7 @@ def test_new(targs, max_seen_id, split_mode):
             unique_eids = unique_keys[:, 2]  # this is just eid column
             b_t_unique = _cached_or_host_lookup(cached_t, data.t, unique_eids, device)
             b_raw_msg_unique = _cached_or_host_lookup(cached_msg, data.msg, unique_eids, device)
-            z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=dataset['data'])
+            z_m, last_update = model['memory'](n_id, mem_graph_quad, b_t_unique, b_raw_msg_unique, unique_keys, inverse_indices, data=data)
                 
 
             store_eid = store_quad[3]
@@ -1017,23 +1023,25 @@ def test_new(targs, max_seen_id, split_mode):
 
 
 
-def train_with_custom_neg_sampler(targs):
-    model = targs['model']
+def train_with_custom_neg_sampler(runtime: TrainRuntime):
+    model_bundle = runtime.model_bundle
+    model = model_bundle.model
     model['memory'].train()
     model['gnn'].train()
     model['link_pred'].train()
     model['memory'].reset_state()
 
-    optimizer = targs['optimizer']
-    criterion = targs['criterion']
+    optimizer = model_bundle.optimizer
+    criterion = model_bundle.criterion
 
-    dataset = targs['dataset']
+    dataset_runtime = runtime.dataset_runtime
+    dataset = dataset_runtime.dataset
     train_loader = dataset['train_dataloader']
-    device = targs['device']
-    min_dst_idx = targs['min_dst_idx']
-    max_dst_idx = targs['max_dst_idx']
-    neighbor_loader = targs['sampler']
-    neg_sampler = targs['neg_sampler']
+    device = runtime.device
+    min_dst_idx = dataset_runtime.min_dst_idx
+    max_dst_idx = dataset_runtime.max_dst_idx
+    neighbor_loader = runtime.sampler_runtime.sampler
+    neg_sampler = runtime.neg_sampler
 
     total_loss = 0
 
@@ -1109,28 +1117,30 @@ def train_with_custom_neg_sampler(targs):
 
 
 
-def train_sample_only(targs, max_seen_id):
-    model = targs['model']
+def train_sample_only(runtime: TrainRuntime, max_seen_id):
+    model_bundle = runtime.model_bundle
+    model = model_bundle.model
     model['memory'].train()
     model['gnn'].train()
     model['link_pred'].train()
     model['memory'].reset_state()
 
-    optimizer = targs['optimizer']
-    criterion = targs['criterion']
+    optimizer = model_bundle.optimizer
+    criterion = model_bundle.criterion
 
-    dataset = targs['dataset']
+    dataset_runtime = runtime.dataset_runtime
+    dataset = dataset_runtime.dataset
     train_loader = dataset['train_dataloader']
-    device = targs['device']
-    min_dst_idx = targs['min_dst_idx']
-    max_dst_idx = targs['max_dst_idx']
-    neighbor_loader = targs['sampler']
+    device = runtime.device
+    min_dst_idx = dataset_runtime.min_dst_idx
+    max_dst_idx = dataset_runtime.max_dst_idx
+    neighbor_loader = runtime.sampler_runtime.sampler
 
-    neg_sampler = targs['neg_sampler']
-    known_dsts = targs['known_dsts']
-    deliver_to = targs['deliver_to']
-    decoder = targs['decoder']
-    embedding = targs['embedding']
+    neg_sampler = runtime.neg_sampler
+    known_dsts = dataset_runtime.known_dsts
+    deliver_to = runtime.deliver_to
+    decoder = runtime.decoder
+    embedding = runtime.embedding
 
 
     total_loss = 0

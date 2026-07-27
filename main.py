@@ -4,7 +4,7 @@ from modules.runtime_entry import (
     build_dataset_bundle,
     build_model_bundle,
     build_sampler,
-    build_train_args,
+    build_train_runtime,
     make_run_tag,
     parse_runtime_config,
 )
@@ -68,11 +68,11 @@ def main():
             tolerance=config.tolerance,
             patience=config.patience,
         )
-        targs = build_train_args(
+        runtime = build_train_runtime(
             config,
             model_bundle,
             dataset_bundle,
-            sampler_bundle.sampler,
+            sampler_bundle,
             device,
         )
         val_perf_list = []
@@ -85,7 +85,7 @@ def main():
         for epoch in range(1, config.num_epoch + 1):
             # training
             start_epoch_train = timeit.default_timer()
-            loss, max_seen_eid = actrain(targs, -1)
+            loss, max_seen_eid = actrain(runtime, -1)
             tim = timeit.default_timer() - start_epoch_train
             print(
                 f"Epoch: {epoch:02d}, Loss: {loss:.4f}, Training elapsed Time (s): {timeit.default_timer() - start_epoch_train: .4f}"
@@ -97,7 +97,7 @@ def main():
 
             if not config.debug:
             
-                perf_metric_val, max_seen_id = test(targs, max_seen_eid, split_mode="val")
+                perf_metric_val, max_seen_id = test(runtime, max_seen_eid, split_mode="val")
                 print(f"\tValidation {dataset_bundle.dataset['metric']}: {perf_metric_val: .4f}")
                 # # print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
                 val_perf_list.append(perf_metric_val)
@@ -130,7 +130,8 @@ def main():
                     )
                     args.offload_mode = "on"
                     sampler_bundle = build_sampler(config, dataset_bundle, device)
-                    targs["sampler"] = sampler_bundle.sampler
+                    runtime.sampler_runtime.sampler = sampler_bundle.sampler
+                    runtime.sampler_runtime.backend = sampler_bundle.backend
                     print(f"INFO: Sampler backend: {sampler_bundle.backend}")
             
         train_val_time = timeit.default_timer() - start_train_val
@@ -144,7 +145,7 @@ def main():
             early_stopper.load_checkpoint(model_bundle.model)
             # final testing
             start_test = timeit.default_timer()
-            perf_metric_test, max_seen_eid = test(targs, max_seen_id, split_mode="test")
+            perf_metric_test, max_seen_eid = test(runtime, max_seen_id, split_mode="test")
 
             print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
             print(f"\tTest: {dataset_bundle.dataset['metric']}: {perf_metric_test: .4f}")

@@ -18,6 +18,7 @@ from modules.decoder import LinkPredictor
 from modules.NCNDecoder.NCNPred import NCNPredictor
 from modules.neg_sampler import NegLinkSamplerDest
 from modules.sampler_builder import SamplerBuildSpec, build_sampler_backend
+from modules.training_runtime import DatasetRuntime, SamplerRuntime, TrainRuntime
 from modules.train_utils import train as actrain, test_new as test
 from modules.early_stopping import EarlyStopMonitor
 from .datasets import dataset_from_csv, dataset_from_directory
@@ -197,23 +198,35 @@ class PrismExperiment:
             patience=cfg.num_epoch,
         )
 
-        self.targs = {
-            "model": self.model,
-            "optimizer": self.optimizer,
-            "criterion": self.criterion,
-            "dataset": self.dataset,
-            "min_dst_idx": self.min_dst_idx,
-            "max_dst_idx": self.max_dst_idx,
-            "device": self.device,
-            "sampler": self.sampler,
-            "neg_sampler": NegLinkSamplerDest(self.unique_destination_nodes),
-            "deliver_to": cfg.deliver_to,
-            "decoder": cfg.decoder,
-            "embedding": cfg.embedding,
-            "val_neg": cfg.val_neg,
-            "known_dsts": None,
-            "data_cache": self.data_cache,
-        }
+        self.targs = TrainRuntime(
+            model_bundle=type(
+                "ApiModelBundle",
+                (),
+                {
+                    "model": self.model,
+                    "optimizer": self.optimizer,
+                    "criterion": self.criterion,
+                },
+            )(),
+            dataset_runtime=DatasetRuntime(
+                dataset=self.dataset,
+                data=self.data,
+                data_cache=self.data_cache,
+                min_dst_idx=self.min_dst_idx,
+                max_dst_idx=self.max_dst_idx,
+                known_dsts=None,
+            ),
+            sampler_runtime=SamplerRuntime(
+                sampler=self.sampler,
+                backend=self.sampler_backend,
+            ),
+            device=self.device,
+            neg_sampler=NegLinkSamplerDest(self.unique_destination_nodes),
+            deliver_to=cfg.deliver_to,
+            decoder=cfg.decoder,
+            embedding=cfg.embedding,
+            val_neg=cfg.val_neg,
+        )
 
     def setup(self):
         if not self._data_ready:

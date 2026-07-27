@@ -19,6 +19,7 @@ from modules.msg_func import IdentityMessage
 from modules.neg_sampler import NegLinkSamplerDest
 from modules.NCNDecoder.NCNPred import NCNPredictor
 from modules.sampler_builder import SamplerBuildSpec, build_sampler_backend
+from modules.training_runtime import DatasetRuntime, SamplerRuntime, TrainRuntime
 
 
 @dataclass
@@ -324,27 +325,42 @@ def build_model_bundle(
     )
 
 
+def build_train_runtime(
+    config: PrismRuntimeConfig,
+    model_bundle: ModelBundle,
+    dataset_bundle: DatasetBundle,
+    sampler_bundle: SamplerBundle,
+    device: torch.device,
+) -> TrainRuntime:
+    return TrainRuntime(
+        model_bundle=model_bundle,
+        dataset_runtime=DatasetRuntime(
+            dataset=dataset_bundle.dataset,
+            data=dataset_bundle.data,
+            data_cache=dataset_bundle.data_cache,
+            min_dst_idx=dataset_bundle.min_dst_idx,
+            max_dst_idx=dataset_bundle.max_dst_idx,
+            known_dsts=dataset_bundle.known_dsts,
+        ),
+        sampler_runtime=SamplerRuntime(
+            sampler=sampler_bundle.sampler,
+            backend=sampler_bundle.backend,
+        ),
+        device=device,
+        neg_sampler=dataset_bundle.neg_dest_sampler,
+        deliver_to=config.args.deliver_to,
+        decoder=config.args.decoder,
+        embedding=config.args.embedding,
+        val_neg=config.args.val_neg,
+    )
+
+
 def build_train_args(
     config: PrismRuntimeConfig,
     model_bundle: ModelBundle,
     dataset_bundle: DatasetBundle,
     sampler: Any,
     device: torch.device,
-) -> Dict[str, Any]:
-    return {
-        "model": model_bundle.model,
-        "optimizer": model_bundle.optimizer,
-        "criterion": model_bundle.criterion,
-        "dataset": dataset_bundle.dataset,
-        "min_dst_idx": dataset_bundle.min_dst_idx,
-        "max_dst_idx": dataset_bundle.max_dst_idx,
-        "device": device,
-        "sampler": sampler,
-        "neg_sampler": dataset_bundle.neg_dest_sampler,
-        "deliver_to": config.args.deliver_to,
-        "decoder": config.args.decoder,
-        "embedding": config.args.embedding,
-        "val_neg": config.args.val_neg,
-        "known_dsts": dataset_bundle.known_dsts,
-        "data_cache": dataset_bundle.data_cache,
-    }
+) -> TrainRuntime:
+    sampler_bundle = SamplerBundle(sampler=sampler, backend="", build_time_seconds=0.0)
+    return build_train_runtime(config, model_bundle, dataset_bundle, sampler_bundle, device)
